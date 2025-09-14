@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  vcmail-app:
+    container_name: vcmail-app
+    build: .
+    ports:
+      - "9090:8080"
+      - "4573:4573"
+    depends_on:
+      vcmail-db:
+        condition: service_healthy
+    networks:
+      - nginx-network
+
+  vcmail-db:
+    container_name: vcmail-db
+    image: postgres:17
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_DB: vcmailDB
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5400:5432"
+    volumes:
+      - vcmail_db_data:/var/lib/postgresql/data
+    networks:
+      - nginx-network
+
+
+volumes:
+  vcmail_db_data:
+
+networks:
+  nginx-network:
+    external: true
