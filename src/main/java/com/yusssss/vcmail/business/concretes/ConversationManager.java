@@ -61,9 +61,10 @@ public class ConversationManager implements ConversationService {
     }
 
     @Override
-    public Conversation startConversation() {
+    public Conversation startConversation(String callerPhoneNumber) {
         logger.info("Starting a new conversation");
         Conversation conversation = new Conversation();
+        conversation.setCallerPhoneNumber(callerPhoneNumber);
         conversation.setStartTime(LocalDateTime.now());
         conversation.setStatus("IN_PROGRESS");
         var savedConversation = conversationDao.save(conversation);

@@ -26,7 +26,7 @@ assemblyai:
 
 asterisk:
   ari:
-    host: host.docker.internal
+    host: 127.19.0.1
     port: 8088
     user: java-app
     password: sifre123

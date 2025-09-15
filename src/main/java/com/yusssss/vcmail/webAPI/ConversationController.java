@@ -66,19 +66,5 @@ public class ConversationController {
     }
 
 
-    @PostMapping("/start")
-    public ResponseEntity<SuccessDataResult<Conversation>> startConversation() {
-
-        Conversation conversation = conversationService.startConversation();
-
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(new SuccessDataResult<>(conversation,
-                        "Conversation started successfully",
-                        HttpStatus.CREATED));
-
-    }
-
-
 
 }

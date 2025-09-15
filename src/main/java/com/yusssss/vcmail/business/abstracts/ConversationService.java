@@ -13,5 +13,5 @@ public interface ConversationService {
 
     Message addMessage(String conversationId, Message message);
 
-    public Conversation startConversation();
+    public Conversation startConversation(String callerPhoneNumber);
 }
