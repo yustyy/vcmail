@@ -23,3 +23,10 @@ server:
 assemblyai:
   api:
     key: YOK
+
+asterisk:
+  ari:
+    port: 8088
+    user: java-app
+    password: sifre123
+    app: vcmail-app
