@@ -2,7 +2,6 @@ package com.yusssss.vcmail.core.utilities.ari;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
@@ -53,9 +52,12 @@ public class AriConnectionManager {
         this.objectMapper = objectMapper;
     }
 
+    public boolean isConnected() {
+        return eventSocket != null && eventSocket.isOpen();
+    }
 
 
-    @PostConstruct
+
     public void connect(){
         String wsUrl = String.format("ws://%s:%d/ari/events?api_key=%s:%s&app=%s",
                 ariHost, ariPort, ariUser, ariPassword, ariApp);
@@ -106,9 +108,12 @@ public class AriConnectionManager {
 
     @PreDestroy
     public void disconnect(){
-        if (eventSocket != null) {
-            eventSocket.close();
-            logger.info("Disconnected from ARI WebSocket");
+        try {
+            if (eventSocket != null && eventSocket.isOpen()) {
+                eventSocket.closeBlocking();
+            }
+        } catch (InterruptedException e) {
+            logger.warn("Interrupted while closing WebSocket", e);
         }
     }
 

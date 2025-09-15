@@ -6,9 +6,9 @@ services:
     build: .
     ports:
       - "9090:8080"
-      - "8089:8088"
       - "10000-20000:10000-20000/udp"
-      - "4573:4573"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       vcmail-db:
         condition: service_healthy
