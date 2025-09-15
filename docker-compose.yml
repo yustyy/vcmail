@@ -6,6 +6,8 @@ services:
     build: .
     ports:
       - "9090:8080"
+      - "8088:8088"
+      - "10000-20000:10000-20000/udp"
       - "4573:4573"
     depends_on:
       vcmail-db:

@@ -68,9 +68,8 @@
 		</dependency>
 
 		<dependency>
-			<groupId>org.asteriskjava</groupId>
-			<artifactId>asterisk-java</artifactId>
-			<version>3.41.0</version>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
 		</dependency>
 
 
