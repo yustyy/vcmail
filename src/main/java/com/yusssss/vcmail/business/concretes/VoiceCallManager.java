@@ -11,9 +11,10 @@ import com.yusssss.vcmail.entities.Message;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -23,15 +24,13 @@ public class VoiceCallManager {
     private final AriConnectionManager ariConnectionManager;
     private final RtpListenerFactory rtpListenerFactory;
     private final AssemblyAIService assemblyAIService;
-
     private final Logger logger = LoggerFactory.getLogger(VoiceCallManager.class);
 
 
-    private final Set<String> activeChannelIds = ConcurrentHashMap.newKeySet();
-    private final Set<String> externalMediaChannels = ConcurrentHashMap.newKeySet();
-    private final Set<String> activeConversations = ConcurrentHashMap.newKeySet();
+    private final Map<String, String> channelIdToConversationIdMap = new ConcurrentHashMap<>();
 
-
+    @Value("${asterisk.ari.rtp-host}")
+    private String rtpHost;
 
     public VoiceCallManager(ConversationService conversationService,
                             AssemblyAIService assemblyAIService,
@@ -45,131 +44,99 @@ public class VoiceCallManager {
 
     @PostConstruct
     public void initialize() {
-        logger.info("Initializing VoiceCallManager and setting ARI event listener.");
-        ariConnectionManager.onStasisStart(this::handleStasisEvent);
+        logger.info("Initializing VoiceCallManager and setting ARI event listeners.");
+        ariConnectionManager.onStasisStart(this::handleStasisStartEvent);
+        ariConnectionManager.onStasisEnd(this::handleStasisEndEvent);
     }
 
-    private void handleNewCall(String callerChannelId, String callerNumber) {
-        logger.info("Processing new call. Channel: {}, Caller: {}", callerChannelId, callerNumber);
+    private void handleStasisStartEvent(JsonNode stasisStartEvent) {
+        String channelId = stasisStartEvent.path("channel").path("id").asText();
+        JsonNode callerNode = stasisStartEvent.path("channel").path("caller");
 
-        activeChannelIds.add(callerChannelId);
-
-        Conversation conversation = conversationService.startConversation();
-        String conversationId = conversation.getId();
-        activeConversations.add(conversationId);
-
-        logger.info("Started new conversation {} for channel {}", conversationId, callerChannelId);
-
-        String bridgeId = ariConnectionManager.createBridge();
-        if (bridgeId == null) {
-            logger.error("[{}] Could not create bridge. Ending call.", conversationId);
-            cleanup(conversationId, callerChannelId);
+        if (callerNode.isMissingNode() || !callerNode.has("number") || callerNode.path("number").asText().isEmpty() || channelIdToConversationIdMap.containsKey(channelId)) {
+            logger.warn("Ignoring StasisStart event for internal or duplicate channel: {}", channelId);
             return;
         }
 
-        ariConnectionManager.addChannelToBridge(bridgeId, callerChannelId);
+        String callerNumber = callerNode.path("number").asText();
+        logger.info("Handling a new call. Channel: {}, Caller: {}", channelId, callerNumber);
+
+        Conversation conversation = conversationService.startConversation();
+        String conversationId = conversation.getId();
+        channelIdToConversationIdMap.put(channelId, conversationId);
+
+        String bridgeId = ariConnectionManager.createBridge();
+        if (bridgeId == null) {
+            logger.error("[{}] Could not create a bridge. Ending call.", conversationId);
+            endCall(conversationId, channelId, "ERROR", true);
+            return;
+        }
+        ariConnectionManager.addChannelToBridge(bridgeId, channelId);
 
         RtpListener rtpListener = rtpListenerFactory.createListener(conversationId);
         rtpListener.start();
         int listeningPort = rtpListener.getPort();
 
-        JsonNode externalMediaChannel = ariConnectionManager.createExternalMediaChannel("172.19.0.1:" + listeningPort);
+        JsonNode externalMediaChannel = ariConnectionManager.createExternalMediaChannel(rtpHost + ":" + listeningPort);
         if (externalMediaChannel == null) {
             logger.error("[{}] Could not create external media channel. Ending call.", conversationId);
-            cleanup(conversationId, callerChannelId);
+            endCall(conversationId, channelId, "ERROR", true);
             return;
         }
-
         String mediaChannelId = externalMediaChannel.path("id").asText();
-        externalMediaChannels.add(mediaChannelId);
-
         ariConnectionManager.addChannelToBridge(bridgeId, mediaChannelId);
 
         rtpListener.onAudioData(assemblyAIService::sendAudio);
         assemblyAIService.startSession(
-                transcript -> processUserTranscript(conversationId, callerChannelId, transcript),
-                error -> handleTranscriptionError(conversationId, callerChannelId, error),
-                reason -> endCall(conversationId, callerChannelId, "COMPLETED")
+                transcript -> processUserTranscript(conversationId, channelId, transcript),
+                error -> handleTranscriptionError(conversationId, channelId, error),
+                reason -> logger.info("[{}] AssemblyAI session closed. Reason: {}", conversationId, reason)
         );
 
-        playWelcomeMessage(conversationId, callerChannelId);
+        playWelcomeMessage(conversationId, channelId);
     }
 
-    private void handleStasisEvent(JsonNode stasisStartEvent) {
-        String channelId = stasisStartEvent.path("channel").path("id").asText();
-        String channelName = stasisStartEvent.path("channel").path("name").asText();
-        String callerNumber = stasisStartEvent.path("channel").path("caller").path("number").asText();
-
-        logger.info("StasisStart event received. Channel: {}, Name: {}, Caller: {}",
-                channelId, channelName, callerNumber);
-
-        if (channelName != null && channelName.startsWith("UnicastRTP")) {
-            logger.info("Ignoring StasisStart for external media channel: {}", channelId);
-            externalMediaChannels.add(channelId);
-            return;
+    private void handleStasisEndEvent(JsonNode stasisEndEvent) {
+        String channelId = stasisEndEvent.path("channel").path("id").asText();
+        String conversationId = channelIdToConversationIdMap.get(channelId);
+        if (conversationId != null) {
+            logger.info("StasisEnd event received for channel {}. Cleaning up.", channelId);
+            endCall(conversationId, channelId, "STASIS_END", false);
         }
-
-        if (activeChannelIds.contains(channelId)) {
-            logger.warn("Received duplicate StasisStart event for already active channel {}. Ignoring.", channelId);
-            return;
-        }
-
-        if (callerNumber == null || callerNumber.trim().isEmpty()) {
-            logger.info("Ignoring StasisStart for channel without caller number: {}", channelId);
-            return;
-        }
-
-        handleNewCall(channelId, callerNumber);
     }
-
-    private void cleanup(String conversationId, String channelId) {
-        activeChannelIds.remove(channelId);
-        activeConversations.remove(conversationId);
-        rtpListenerFactory.stopListener(conversationId);
-
-        assemblyAIService.stopSession();
-
-        ariConnectionManager.hangupChannel(channelId);
-    }
-
 
     private void processUserTranscript(String conversationId, String channelId, String userText) {
         logger.info("[{}] User said: '{}'", conversationId, userText);
-
         saveUserMessage(conversationId, userText);
-
-
         String assistantText = "Cevabınızı aldım: " + userText;
-
         saveAssistantMessage(conversationId, assistantText);
-
-
         ariConnectionManager.playAudio(channelId, "beep");
     }
 
     private void playWelcomeMessage(String conversationId, String channelId) {
-        String welcomeText = "Merhaba, VitaNova Wellness'a hoş geldiniz. Ben Elara, size nasıl yardımcı olabilirim?";
+        String welcomeText = "Merhaba, VitaNova Wellness'a hos geldiniz. Ben Elara, size nasil yardimci olabilirim?";
         saveAssistantMessage(conversationId, welcomeText);
-
-        // TODO: TTS entegrasyonu
         ariConnectionManager.playAudio(channelId, "hello-world");
     }
 
-    private void endCall(String conversationId, String channelId, String status) {
-        logger.info("[{}] Ending call on channel {} with status: {}", conversationId, channelId, status);
+    private void endCall(String conversationId, String channelId, String status, boolean forceHangup) {
+        if (channelIdToConversationIdMap.remove(channelId) != null) {
+            logger.info("[{}] Cleaning up resources for channel {} with status: {}", conversationId, channelId, status);
 
-        activeChannelIds.remove(channelId);
+            rtpListenerFactory.stopListener(conversationId);
+            assemblyAIService.stopSession();
+            //conversationService.endConversation(conversationId, status);
 
-
-        rtpListenerFactory.stopListener(conversationId);
-        assemblyAIService.stopSession();
-
-        ariConnectionManager.hangupChannel(channelId);
+            if (forceHangup) {
+                logger.warn("[{}] Forcing hangup on channel {} due to status: {}", conversationId, channelId, status);
+                ariConnectionManager.hangupChannel(channelId);
+            }
+        }
     }
 
     private void handleTranscriptionError(String conversationId, String channelId, Exception error) {
         logger.error("[{}] Transcription error on channel {}: {}", conversationId, channelId, error.getMessage());
-        endCall(conversationId, channelId, "ERROR");
+        endCall(conversationId, channelId, "ERROR", true);
     }
 
     private void saveUserMessage(String conversationId, String text) {
@@ -184,11 +151,5 @@ public class VoiceCallManager {
         message.setSpeaker("ASSISTANT");
         message.setText(text);
         conversationService.addMessage(conversationId, message);
-    }
-
-    public void logActiveConnections() {
-        logger.info("Active channels: {}", activeChannelIds.size());
-        logger.info("Active conversations: {}", activeConversations.size());
-        logger.info("External media channels: {}", externalMediaChannels.size());
     }
 }

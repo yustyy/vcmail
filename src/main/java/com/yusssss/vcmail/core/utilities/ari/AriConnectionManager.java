@@ -24,6 +24,7 @@ public class AriConnectionManager {
     private final ObjectMapper objectMapper;
     private WebSocketClient eventSocket;
     private Consumer<JsonNode> onStasisStart;
+    private Consumer<JsonNode> onStasisEnd;
 
     @Value("${asterisk.ari.host:localhost}")
     private String ariHost;
@@ -62,10 +63,17 @@ public class AriConnectionManager {
                 public void onMessage(String message) {
                     try {
                         JsonNode event = objectMapper.readTree(message);
-                        if ("StasisStart".equals(event.path("type").asText()) && onStasisStart != null) {
+                        String eventType = event.path("type").asText();
+
+                        if ("StasisStart".equals(eventType) && onStasisStart != null) {
                             onStasisStart.accept(event);
                         }
-                    } catch (Exception e) { logger.error("Error parsing ARI event", e); }
+                        else if ("StasisEnd".equals(eventType) && onStasisEnd != null) {
+                            onStasisEnd.accept(event);
+                        }
+                    } catch (Exception e) {
+                        logger.error("Error parsing ARI event", e);
+                    }
                 }
 
                 @Override
@@ -97,6 +105,10 @@ public class AriConnectionManager {
 
     public void onStasisStart(Consumer<JsonNode> callback) {
         this.onStasisStart = callback;
+    }
+
+    public void onStasisEnd(Consumer<JsonNode> callback) {
+        this.onStasisEnd = callback;
     }
 
     public void playAudio(String channelId, String soundFile) {

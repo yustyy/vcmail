@@ -26,7 +26,9 @@ assemblyai:
 
 asterisk:
   ari:
+    host: 172.19.0.1
     port: 8088
     user: java-app
     password: sifre123
     app: vcmail-app
+    rtp-host: 172.19.0.1
