@@ -109,6 +109,7 @@ public class VoiceCallManager {
         logger.info("[{}] User said: '{}'", conversationId, userText);
         saveUserMessage(conversationId, userText);
         String assistantText = "Cevabınızı aldım: " + userText;
+        logger.info("[{}] Sending assistant message: '{}'", conversationId, assistantText);
         saveAssistantMessage(conversationId, assistantText);
         ariConnectionManager.playAudio(channelId, "beep");
     }
