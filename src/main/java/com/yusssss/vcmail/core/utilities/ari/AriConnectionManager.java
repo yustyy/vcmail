@@ -8,14 +8,12 @@ import org.java_websocket.handshake.ServerHandshake;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
+import java.util.Map;
 import java.util.function.Consumer;
 
 @Component
@@ -108,12 +106,72 @@ public class AriConnectionManager {
         sendPostRequest(url, "playAudio", channelId);
     }
 
-    public void bridgeRtp(String channelId, String destination) {
-        String url = String.format("http://%s:%d/ari/channels/%s/externalMedia?api_key=%s:%s&app=%s&external_host=%s&format=slin16",
-                ariHost, ariPort, channelId, ariUser, ariPassword, ariApp, destination);
+    public JsonNode createExternalMediaChannel(String rtpDestination) {
+        String url = String.format("http://%s:%d/ari/channels/externalMedia?api_key=%s:%s",
+                ariHost, ariPort, ariUser, ariPassword);
 
-        sendPostRequest(url, "bridgeRtp", channelId);
+        Map<String, String> body = Map.of(
+                "app", ariApp,
+                "external_host", rtpDestination,
+                "format", "slin16"
+        );
+
+        try {
+            String jsonBody = objectMapper.writeValueAsString(body);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> entity = new HttpEntity<>(jsonBody, headers);
+
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+            if (response.getStatusCode().is2xxSuccessful()) {
+                logger.info("Successfully created external media channel for {}", rtpDestination);
+                return objectMapper.readTree(response.getBody());
+            } else {
+                logger.error("Failed to create external media channel. Status: {}, Body: {}", response.getStatusCode(), response.getBody());
+            }
+        } catch (Exception e) {
+            logger.error("Error sending ARI createExternalMediaChannel command", e);
+        }
+        return null;
     }
+
+    public void createBridgeAndAddChannels(String... channelIds) {
+        // 1. Yeni bir köprü oluştur
+        String createBridgeUrl = String.format("http://%s:%d/ari/bridges?api_key=%s:%s",
+                ariHost, ariPort, ariUser, ariPassword);
+
+        try {
+            ResponseEntity<String> createResponse = restTemplate.exchange(createBridgeUrl, HttpMethod.POST, null, String.class);
+            if (!createResponse.getStatusCode().is2xxSuccessful()) {
+                logger.error("Failed to create bridge. Status: {}", createResponse.getStatusCode());
+                return;
+            }
+
+            JsonNode bridge = objectMapper.readTree(createResponse.getBody());
+            String bridgeId = bridge.path("id").asText();
+            logger.info("Successfully created bridge with ID: {}", bridgeId);
+
+            // 2. Kanalları bu köprüye ekle
+            String addChannelUrl = String.format("http://%s:%d/ari/bridges/%s/addChannel?api_key=%s:%s",
+                    ariHost, ariPort, bridgeId, ariUser, ariPassword);
+
+            // --- DEĞİŞİKLİK BURADA: JSONObject YERİNE MAP KULLANIYORUZ ---
+            Map<String, String> body = Map.of("channel", String.join(",", channelIds));
+            String jsonBody = objectMapper.writeValueAsString(body);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> entity = new HttpEntity<>(jsonBody, headers);
+
+            restTemplate.exchange(addChannelUrl, HttpMethod.POST, entity, String.class);
+            logger.info("Successfully added channels {} to bridge {}", String.join(",", channelIds), bridgeId);
+
+        } catch (Exception e) {
+            logger.error("Error creating bridge or adding channels", e);
+        }
+    }
+
 
     public void hangupChannel(String channelId) {
         String url = String.format("http://%s:%d/ari/channels/%s?api_key=%s:%s",

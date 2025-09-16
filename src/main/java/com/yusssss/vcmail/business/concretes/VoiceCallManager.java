@@ -52,7 +52,16 @@ public class VoiceCallManager {
         rtpListener.start();
         int listeningPort = rtpListener.getPort();
 
-        ariConnectionManager.bridgeRtp(channelId, "127.0.0.1:" + listeningPort);
+
+        JsonNode externalMediaChannel = ariConnectionManager.createExternalMediaChannel("172.19.0.1:" + listeningPort);
+        if (externalMediaChannel == null) {
+            logger.error("Could not create external media channel. Ending call.");
+            ariConnectionManager.hangupChannel(channelId);
+            return;
+        }
+        String mediaChannelId = externalMediaChannel.path("id").asText();
+
+        ariConnectionManager.createBridgeAndAddChannels(channelId, mediaChannelId);
 
         rtpListener.onAudioData(assemblyAIService::sendAudio);
 
