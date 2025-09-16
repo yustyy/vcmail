@@ -13,6 +13,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 @Service
 public class VoiceCallManager {
 
@@ -22,6 +25,9 @@ public class VoiceCallManager {
     private final AssemblyAIService assemblyAIService;
 
     private final Logger logger = LoggerFactory.getLogger(VoiceCallManager.class);
+
+
+    private final Set<String> activeChannelIds = ConcurrentHashMap.newKeySet();
 
 
     public VoiceCallManager(ConversationService conversationService,
@@ -42,8 +48,16 @@ public class VoiceCallManager {
 
     private void handleNewCall(JsonNode stasisStartEvent) {
         String callerChannelId = stasisStartEvent.path("channel").path("id").asText();
+        if (activeChannelIds.contains(callerChannelId)) {
+            logger.warn("Received a duplicate StasisStart event for already active channel {}. Ignoring.", callerChannelId);
+            return;
+        }
+
+        activeChannelIds.add(callerChannelId);
+
         String callerNumber = stasisStartEvent.path("channel").path("caller").path("number").asText();
         logger.info("New call received via ARI. Channel: {}, Caller: {}", callerChannelId, callerNumber);
+
 
         Conversation conversation = conversationService.startConversation();
         String conversationId = conversation.getId();
@@ -108,6 +122,9 @@ public class VoiceCallManager {
 
     private void endCall(String conversationId, String channelId, String status) {
         logger.info("[{}] Ending call on channel {} with status: {}", conversationId, channelId, status);
+
+        activeChannelIds.remove(channelId);
+
 
         rtpListenerFactory.stopListener(conversationId);
         assemblyAIService.stopSession();
