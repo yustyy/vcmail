@@ -41,12 +41,22 @@ public class VoiceCallManager {
     }
 
     private void handleNewCall(JsonNode stasisStartEvent) {
-        String channelId = stasisStartEvent.path("channel").path("id").asText();
+        String callerChannelId = stasisStartEvent.path("channel").path("id").asText();
         String callerNumber = stasisStartEvent.path("channel").path("caller").path("number").asText();
-        logger.info("New call received via ARI. Channel: {}, Caller: {}", channelId, callerNumber);
+        logger.info("New call received via ARI. Channel: {}, Caller: {}", callerChannelId, callerNumber);
 
         Conversation conversation = conversationService.startConversation();
         String conversationId = conversation.getId();
+
+        String bridgeId = ariConnectionManager.createBridge();
+        if (bridgeId == null) {
+            logger.error("[{}] Could not create a bridge. Ending call.", conversationId);
+            ariConnectionManager.hangupChannel(callerChannelId);
+            return;
+        }
+
+        ariConnectionManager.addChannelToBridge(bridgeId, callerChannelId);
+
 
         RtpListener rtpListener = rtpListenerFactory.createListener(conversationId);
         rtpListener.start();
@@ -55,23 +65,22 @@ public class VoiceCallManager {
 
         JsonNode externalMediaChannel = ariConnectionManager.createExternalMediaChannel("172.19.0.1:" + listeningPort);
         if (externalMediaChannel == null) {
-            logger.error("Could not create external media channel. Ending call.");
-            ariConnectionManager.hangupChannel(channelId);
+            logger.error("[{}] Could not create external media channel. Ending call.", conversationId);
+            ariConnectionManager.hangupChannel(callerChannelId);
             return;
         }
         String mediaChannelId = externalMediaChannel.path("id").asText();
 
-        ariConnectionManager.createBridgeAndAddChannels(channelId, mediaChannelId);
+        ariConnectionManager.addChannelToBridge(bridgeId, mediaChannelId);
 
         rtpListener.onAudioData(assemblyAIService::sendAudio);
-
         assemblyAIService.startSession(
-                transcript -> processUserTranscript(conversationId, channelId, transcript),
-                error -> handleTranscriptionError(conversationId, channelId, error),
-                reason -> endCall(conversationId, channelId, "COMPLETED")
+                transcript -> processUserTranscript(conversationId, callerChannelId, transcript),
+                error -> handleTranscriptionError(conversationId, callerChannelId, error),
+                reason -> endCall(conversationId, callerChannelId, "COMPLETED")
         );
 
-        playWelcomeMessage(conversationId, channelId);
+        playWelcomeMessage(conversationId, callerChannelId);
     }
 
 

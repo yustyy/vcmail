@@ -136,8 +136,60 @@ public class AriConnectionManager {
         return null;
     }
 
+
+    public String createBridge() {
+        String url = String.format("http://%s:%d/ari/bridges?api_key=%s:%s",
+                ariHost, ariPort, ariUser, ariPassword);
+
+        try {
+            String jsonBody = "{\"type\":\"mixing\"}";
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> entity = new HttpEntity<>(jsonBody, headers);
+
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                JsonNode bridgeNode = objectMapper.readTree(response.getBody());
+                String bridgeId = bridgeNode.path("id").asText();
+                logger.info("Successfully created bridge with ID: {}", bridgeId);
+                return bridgeId;
+            } else {
+                logger.error("Failed to create bridge. Status: {}, Body: {}", response.getStatusCode(), response.getBody());
+            }
+        } catch (Exception e) {
+            logger.error("Error sending ARI createBridge command", e);
+        }
+        return null;
+    }
+
+    public void addChannelToBridge(String bridgeId, String channelId) {
+        String url = String.format("http://%s:%d/ari/bridges/%s/addChannel?api_key=%s:%s",
+                ariHost, ariPort, bridgeId, ariUser, ariPassword);
+
+        String jsonBody = "{\"channel\":\"" + channelId + "\"}";
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> entity = new HttpEntity<>(jsonBody, headers);
+
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                logger.info("Successfully added channel {} to bridge {}", channelId, bridgeId);
+            } else {
+                logger.error("Failed to add channel {} to bridge {}. Status: {}, Body: {}",
+                        channelId, bridgeId, response.getStatusCode(), response.getBody());
+            }
+        } catch (Exception e) {
+            logger.error("Error sending ARI addChannelToBridge command", e);
+        }
+    }
+
+
+
     public void createBridgeAndAddChannels(String... channelIds) {
-        // 1. Yeni bir köprü oluştur
         String createBridgeUrl = String.format("http://%s:%d/ari/bridges?api_key=%s:%s",
                 ariHost, ariPort, ariUser, ariPassword);
 
@@ -152,11 +204,9 @@ public class AriConnectionManager {
             String bridgeId = bridge.path("id").asText();
             logger.info("Successfully created bridge with ID: {}", bridgeId);
 
-            // 2. Kanalları bu köprüye ekle
             String addChannelUrl = String.format("http://%s:%d/ari/bridges/%s/addChannel?api_key=%s:%s",
                     ariHost, ariPort, bridgeId, ariUser, ariPassword);
 
-            // --- DEĞİŞİKLİK BURADA: JSONObject YERİNE MAP KULLANIYORUZ ---
             Map<String, String> body = Map.of("channel", String.join(",", channelIds));
             String jsonBody = objectMapper.writeValueAsString(body);
 
