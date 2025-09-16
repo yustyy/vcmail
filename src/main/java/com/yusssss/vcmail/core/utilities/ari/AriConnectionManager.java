@@ -125,8 +125,14 @@ public class AriConnectionManager {
 
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
             if (response.getStatusCode().is2xxSuccessful()) {
-                logger.info("Successfully created external media channel for {}", rtpDestination);
-                return objectMapper.readTree(response.getBody());
+                JsonNode channelNode = objectMapper.readTree(response.getBody());
+                String channelId = channelNode.path("id").asText();
+
+                logger.info("Successfully created external media channel {} for {}", channelId, rtpDestination);
+
+                logger.debug("External media channel {} will trigger StasisStart - this should be ignored by VoiceCallManager", channelId);
+
+                return channelNode;
             } else {
                 logger.error("Failed to create external media channel. Status: {}, Body: {}", response.getStatusCode(), response.getBody());
             }

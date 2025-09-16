@@ -28,6 +28,9 @@ public class VoiceCallManager {
 
 
     private final Set<String> activeChannelIds = ConcurrentHashMap.newKeySet();
+    private final Set<String> externalMediaChannels = ConcurrentHashMap.newKeySet();
+    private final Set<String> activeConversations = ConcurrentHashMap.newKeySet();
+
 
 
     public VoiceCallManager(ConversationService conversationService,
@@ -43,47 +46,42 @@ public class VoiceCallManager {
     @PostConstruct
     public void initialize() {
         logger.info("Initializing VoiceCallManager and setting ARI event listener.");
-        ariConnectionManager.onStasisStart(this::handleNewCall);
+        ariConnectionManager.onStasisStart(this::handleStasisEvent);
     }
 
-    private void handleNewCall(JsonNode stasisStartEvent) {
-        String callerChannelId = stasisStartEvent.path("channel").path("id").asText();
-        if (activeChannelIds.contains(callerChannelId)) {
-            logger.warn("Received a duplicate StasisStart event for already active channel {}. Ignoring.", callerChannelId);
-            return;
-        }
+    private void handleNewCall(String callerChannelId, String callerNumber) {
+        logger.info("Processing new call. Channel: {}, Caller: {}", callerChannelId, callerNumber);
 
         activeChannelIds.add(callerChannelId);
 
-        String callerNumber = stasisStartEvent.path("channel").path("caller").path("number").asText();
-        logger.info("New call received via ARI. Channel: {}, Caller: {}", callerChannelId, callerNumber);
-
-
         Conversation conversation = conversationService.startConversation();
         String conversationId = conversation.getId();
+        activeConversations.add(conversationId);
+
+        logger.info("Started new conversation {} for channel {}", conversationId, callerChannelId);
 
         String bridgeId = ariConnectionManager.createBridge();
         if (bridgeId == null) {
-            logger.error("[{}] Could not create a bridge. Ending call.", conversationId);
-            ariConnectionManager.hangupChannel(callerChannelId);
+            logger.error("[{}] Could not create bridge. Ending call.", conversationId);
+            cleanup(conversationId, callerChannelId);
             return;
         }
 
         ariConnectionManager.addChannelToBridge(bridgeId, callerChannelId);
 
-
         RtpListener rtpListener = rtpListenerFactory.createListener(conversationId);
         rtpListener.start();
         int listeningPort = rtpListener.getPort();
 
-
         JsonNode externalMediaChannel = ariConnectionManager.createExternalMediaChannel("172.19.0.1:" + listeningPort);
         if (externalMediaChannel == null) {
             logger.error("[{}] Could not create external media channel. Ending call.", conversationId);
-            ariConnectionManager.hangupChannel(callerChannelId);
+            cleanup(conversationId, callerChannelId);
             return;
         }
+
         String mediaChannelId = externalMediaChannel.path("id").asText();
+        externalMediaChannels.add(mediaChannelId);
 
         ariConnectionManager.addChannelToBridge(bridgeId, mediaChannelId);
 
@@ -95,6 +93,43 @@ public class VoiceCallManager {
         );
 
         playWelcomeMessage(conversationId, callerChannelId);
+    }
+
+    private void handleStasisEvent(JsonNode stasisStartEvent) {
+        String channelId = stasisStartEvent.path("channel").path("id").asText();
+        String channelName = stasisStartEvent.path("channel").path("name").asText();
+        String callerNumber = stasisStartEvent.path("channel").path("caller").path("number").asText();
+
+        logger.info("StasisStart event received. Channel: {}, Name: {}, Caller: {}",
+                channelId, channelName, callerNumber);
+
+        if (channelName != null && channelName.startsWith("UnicastRTP")) {
+            logger.info("Ignoring StasisStart for external media channel: {}", channelId);
+            externalMediaChannels.add(channelId);
+            return;
+        }
+
+        if (activeChannelIds.contains(channelId)) {
+            logger.warn("Received duplicate StasisStart event for already active channel {}. Ignoring.", channelId);
+            return;
+        }
+
+        if (callerNumber == null || callerNumber.trim().isEmpty()) {
+            logger.info("Ignoring StasisStart for channel without caller number: {}", channelId);
+            return;
+        }
+
+        handleNewCall(channelId, callerNumber);
+    }
+
+    private void cleanup(String conversationId, String channelId) {
+        activeChannelIds.remove(channelId);
+        activeConversations.remove(conversationId);
+        rtpListenerFactory.stopListener(conversationId);
+
+        assemblyAIService.stopSession();
+
+        ariConnectionManager.hangupChannel(channelId);
     }
 
 
@@ -149,5 +184,11 @@ public class VoiceCallManager {
         message.setSpeaker("ASSISTANT");
         message.setText(text);
         conversationService.addMessage(conversationId, message);
+    }
+
+    public void logActiveConnections() {
+        logger.info("Active channels: {}", activeChannelIds.size());
+        logger.info("Active conversations: {}", activeConversations.size());
+        logger.info("External media channels: {}", externalMediaChannels.size());
     }
 }
