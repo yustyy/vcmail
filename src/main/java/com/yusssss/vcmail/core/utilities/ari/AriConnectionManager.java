@@ -94,8 +94,13 @@ public class AriConnectionManager {
 
     @PreDestroy
     public void disconnect() {
-        if (eventSocket != null) {
-            eventSocket.close();
+        try {
+            if (eventSocket != null && eventSocket.isOpen()) {
+                eventSocket.closeBlocking();
+            }
+        } catch (InterruptedException e) {
+            logger.warn("Interrupted while closing WebSocket", e);
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -114,8 +119,12 @@ public class AriConnectionManager {
     public void playAudio(String channelId, String soundFile) {
         String url = String.format("http://%s:%d/ari/channels/%s/play?api_key=%s:%s&media=sound:%s",
                 ariHost, ariPort, channelId, ariUser, ariPassword, soundFile);
-
-        sendPostRequest(url, "playAudio", channelId);
+        try {
+            restTemplate.postForEntity(url, null, String.class);
+            logger.info("ARI 'playAudio' command sent successfully for channel {}", channelId);
+        } catch (Exception e) {
+            logger.error("Error sending ARI 'playAudio' command for channel {}", channelId, e);
+        }
     }
 
     public JsonNode createExternalMediaChannel(String rtpDestination) {
@@ -206,41 +215,6 @@ public class AriConnectionManager {
     }
 
 
-
-    public void createBridgeAndAddChannels(String... channelIds) {
-        String createBridgeUrl = String.format("http://%s:%d/ari/bridges?api_key=%s:%s",
-                ariHost, ariPort, ariUser, ariPassword);
-
-        try {
-            ResponseEntity<String> createResponse = restTemplate.exchange(createBridgeUrl, HttpMethod.POST, null, String.class);
-            if (!createResponse.getStatusCode().is2xxSuccessful()) {
-                logger.error("Failed to create bridge. Status: {}", createResponse.getStatusCode());
-                return;
-            }
-
-            JsonNode bridge = objectMapper.readTree(createResponse.getBody());
-            String bridgeId = bridge.path("id").asText();
-            logger.info("Successfully created bridge with ID: {}", bridgeId);
-
-            String addChannelUrl = String.format("http://%s:%d/ari/bridges/%s/addChannel?api_key=%s:%s",
-                    ariHost, ariPort, bridgeId, ariUser, ariPassword);
-
-            Map<String, String> body = Map.of("channel", String.join(",", channelIds));
-            String jsonBody = objectMapper.writeValueAsString(body);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<String> entity = new HttpEntity<>(jsonBody, headers);
-
-            restTemplate.exchange(addChannelUrl, HttpMethod.POST, entity, String.class);
-            logger.info("Successfully added channels {} to bridge {}", String.join(",", channelIds), bridgeId);
-
-        } catch (Exception e) {
-            logger.error("Error creating bridge or adding channels", e);
-        }
-    }
-
-
     public void hangupChannel(String channelId) {
         String url = String.format("http://%s:%d/ari/channels/%s?api_key=%s:%s",
                 ariHost, ariPort, channelId, ariUser, ariPassword);
@@ -267,5 +241,56 @@ public class AriConnectionManager {
         } catch (Exception e) {
             logger.error("Error sending ARI '{}' command for channel {}", commandName, e);
         }
+    }
+
+
+
+    private void sendRtpAudio(String channelId, byte[] audioData) {
+        String conversationId = getConversationIdByChannelId(channelId);
+
+
+        logger.debug("[{}] Sent {} bytes of audio to channel {}", conversationId, audioData.length, channelId);
+    }
+
+    private String getConversationIdByChannelId(String channelId) {
+        return "unknown-conversation";
+    }
+
+    private byte[] convertAudioFormat(byte[] pcm16Data) {
+
+        byte[] downsampled = new byte[pcm16Data.length / 6];
+        for (int i = 0, j = 0; i < pcm16Data.length - 5; i += 6, j += 2) {
+            downsampled[j] = pcm16Data[i];
+            downsampled[j + 1] = pcm16Data[i + 1];
+        }
+
+        byte[] ulawData = new byte[downsampled.length / 2];
+        for (int i = 0, j = 0; i < downsampled.length - 1; i += 2, j++) {
+
+            short pcmSample = (short) ((downsampled[i + 1] << 8) | (downsampled[i] & 0xFF));
+
+            ulawData[j] = linearToUlaw(pcmSample);
+        }
+
+        return ulawData;
+    }
+
+    private byte linearToUlaw(short pcm) {
+
+        int sign = (pcm >> 8) & 0x80;
+        if (sign != 0) pcm = (short) -pcm;
+        if (pcm > 32635) pcm = 32635;
+
+        int exp = 7;
+        int expMask = 0x4000;
+        while ((pcm & expMask) == 0 && exp > 0) {
+            exp--;
+            expMask >>= 1;
+        }
+
+        int mantissa = (pcm >> (exp + 3)) & 0x0F;
+        int ulaw = ~(sign | (exp << 4) | mantissa);
+
+        return (byte) ulaw;
     }
 }

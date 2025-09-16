@@ -6,23 +6,29 @@ spring:
     username: postgres
     password: postgres
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
 
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
     properties:
       hibernate:
         format_sql: true
+        show_sql: false
     database-platform: org.hibernate.dialect.PostgreSQLDialect
 
 server:
   port: 8080
-
-
-assemblyai:
-  api:
-    key: YOK
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    connection-timeout: 20000ms
 
 asterisk:
   ari:
@@ -32,3 +38,45 @@ asterisk:
     password: sifre123
     app: vcmail-app
     rtp-host: 172.19.0.1
+    connection-timeout: 10000
+    max-retries: 3
+
+openai:
+  api:
+    key: OPENAI_API_KEY
+    model: gpt-4o-mini-realtime-preview
+    voice: marin
+    temperature: 0.7
+    max-tokens: 4096
+
+audio:
+  processing:
+    buffer-size: 1024
+    sample-rate: 8000
+    bits-per-sample: 16
+    channels: 1
+    volume-normalization: true
+    noise-reduction: false
+    auto-gain-control: true
+
+
+rtp:
+  port-range:
+    start: 10000
+    end: 20000
+  packet-size: 160
+  jitter-buffer: 50ms
+
+
+logging:
+  level:
+    com.yusssss.vcmail: INFO
+    com.yusssss.vcmail.core.utilities.audio: DEBUG
+    com.yusssss.vcmail.core.utilities.rtp: DEBUG
+    org.java_websocket: WARN
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level [%X{conversationId:-}] %logger{36} - %msg%n"
+  file:
+    name: logs/vcmail-app.log
+    max-size: 100MB
+    max-history: 30

@@ -9,7 +9,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RtpListenerFactory {
 
     private final Map<String, RtpListener> activeListeners = new ConcurrentHashMap<>();
-
     private int nextPort = 10000;
 
 
