@@ -49,6 +49,10 @@ public class VoiceCallManager {
 
     private final Map<String, ByteArrayOutputStream> conversationAudioBuffers = new ConcurrentHashMap<>();
 
+    private final Map<String, ByteArrayOutputStream> conversationOpenAiAudioBuffers = new ConcurrentHashMap<>();
+
+    private final Map<String, ByteArrayOutputStream> conversationAssistantAudioBuffers = new ConcurrentHashMap<>();
+
     @Value("${asterisk.ari.rtp-host}")
     private String rtpHost;
 
@@ -97,6 +101,8 @@ public class VoiceCallManager {
         String conversationId = conversation.getId();
 
         conversationAudioBuffers.put(conversationId, new ByteArrayOutputStream());
+        conversationOpenAiAudioBuffers.put(conversationId, new ByteArrayOutputStream());
+        conversationAssistantAudioBuffers.put(conversationId, new ByteArrayOutputStream());
 
 
         channelIdToConversationIdMap.put(channelId, conversationId);
@@ -157,6 +163,11 @@ public class VoiceCallManager {
 
                 byte[] convertedAudio = audioConversionService.convertAsteriskToOpenAi(audioData);
 
+
+                if (convertedAudio != null && convertedAudio.length > 0) {
+                    conversationOpenAiAudioBuffers.get(conversationId).write(convertedAudio);
+                }
+
                 if (convertedAudio != null && convertedAudio.length > 0) {
                     byte[] normalizedAudio = audioConversionService.normalizeVolume(convertedAudio, 0.7f);
                     openAiRealtimeService.sendAudio(normalizedAudio);
@@ -180,6 +191,13 @@ public class VoiceCallManager {
                     logger.debug("OpenAI'dan {} byte ses verisi alındı. Asterisk'e gönderilecek.", audioBytes.length);
 
                     try {
+
+                        ByteArrayOutputStream assistantAudioBuffer = conversationAssistantAudioBuffers.get(conversationId);
+                        if (assistantAudioBuffer != null) {
+                            assistantAudioBuffer.write(audioBytes);
+                        }
+
+
                         // OpenAI audio'yu Asterisk formatına dönüştür
                         byte[] convertedAudio = audioConversionService.convertOpenAiToAsterisk(audioBytes);
 
@@ -350,7 +368,11 @@ public class VoiceCallManager {
             logger.info("[{}] 🧹 Cleaning up call resources - Status: {}", conversationId, status);
 
 
-            saveConversationAudioToFile(conversationId);
+            saveConversationAudioToFile(conversationId, "user_audio", conversationAudioBuffers, "ulaw");
+
+            saveConversationAudioToFile(conversationId, "openai_bound_audio", conversationOpenAiAudioBuffers, "pcm");
+
+            saveConversationAudioToFile(conversationId, "assistant_audio", conversationAssistantAudioBuffers, "pcm");
 
             // RTP resources temizle
             rtpListenerFactory.stopListener(conversationId);
@@ -384,37 +406,36 @@ public class VoiceCallManager {
         }
     }
 
-    private void saveConversationAudioToFile(String conversationId) {
-        // Arama için biriktirilen ses tamponunu al ve map'ten sil
-        ByteArrayOutputStream audioBuffer = conversationAudioBuffers.remove(conversationId);
+    private void saveConversationAudioToFile(String conversationId, String prefix, Map<String, ByteArrayOutputStream> bufferMap, String format) {
+        ByteArrayOutputStream audioBuffer = bufferMap.remove(conversationId);
         if (audioBuffer == null || audioBuffer.size() == 0) {
-            logger.warn("[{}] Kaydedilecek ses verisi bulunamadı.", conversationId);
+            logger.warn("[{}] Kaydedilecek {} verisi bulunamadı.", conversationId, prefix);
             return;
         }
 
         try {
             byte[] audioBytes = audioBuffer.toByteArray();
 
-            // Asterisk'ten gelen ham sesin formatını tanımla (8kHz, ULAW, mono)
-            AudioFormat audioFormat = new AudioFormat(AudioFormat.Encoding.ULAW, 8000.0f, 8, 1, 1, 8000.0f, false);
+            // Hangi tamponu kaydediyorsak ona göre formatı belirleyelim
+            AudioFormat audioFormat;
+            if ("ulaw".equals(format)) {
+                audioFormat = new AudioFormat(AudioFormat.Encoding.ULAW, 8000.0f, 8, 1, 1, 8000.0f, false);
+            } else {
+                audioFormat = new AudioFormat(24000.0f, 16, 1, true, false);
+            }
 
-            // Ham ses verisini bir AudioInputStream'e çevir
             ByteArrayInputStream bais = new ByteArrayInputStream(audioBytes);
             AudioInputStream audioInputStream = new AudioInputStream(bais, audioFormat, audioBytes.length / audioFormat.getFrameSize());
 
-            // Dosya adını oluştur (örn: recording_xxxx-xxxx-xxxx-xxxx.wav)
-            String fileName = "recording_" + conversationId + ".wav";
-            java.io.File outputFile = new java.io.File("/kayitlar/" + fileName);
+            String fileName = prefix + "_" + conversationId + ".wav";
+            java.io.File outputFile = new java.io.File("kayitlar/" + fileName); // Kayıtları 'kayitlar' klasörüne yazıyoruz
 
-            // AudioInputStream'i bir WAV dosyasına yaz
             AudioSystem.write(audioInputStream, javax.sound.sampled.AudioFileFormat.Type.WAVE, outputFile);
-
             logger.info("📞 Ses kaydı kaydedildi: {}", outputFile.getAbsolutePath());
-
             audioInputStream.close();
 
         } catch (Exception e) {
-            logger.error("[{}] Ses kaydı dosyaya yazılırken hata oluştu.", conversationId, e);
+            logger.error("[{}] {} kaydı dosyaya yazılırken hata oluştu.", conversationId, prefix, e);
         }
     }
 
