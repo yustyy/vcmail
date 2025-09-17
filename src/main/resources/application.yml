@@ -71,7 +71,7 @@ rtp:
 
 logging:
   level:
-    com.yusssss.vcmail: INFO
+    com.yusssss.vcmail: DEBUG
     com.yusssss.vcmail.core.utilities.audio: DEBUG
     com.yusssss.vcmail.core.utilities.rtp: DEBUG
     org.java_websocket: WARN
