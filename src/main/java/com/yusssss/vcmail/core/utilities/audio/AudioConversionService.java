@@ -17,34 +17,63 @@ public class AudioConversionService {
         if (pcm16Data == null || pcm16Data.length == 0) {
             return new byte[0];
         }
-
         try {
             // OpenAI format: PCM16, 24kHz, mono
             AudioFormat sourceFormat = new AudioFormat(
-                    AudioFormat.Encoding.PCM_SIGNED,
-                    24000.0f,  // 24kHz sample rate
-                    16,        // 16 bits per sample
-                    1,         // mono
-                    2,         // 2 bytes per frame (16-bit)
-                    24000.0f,  // frame rate
-                    false      // little-endian
-            );
+                    AudioFormat.Encoding.PCM_SIGNED, 24000.0f, 16, 1, 2, 24000.0f, false);
 
+            // Asterisk ulaw format: ULAW, 8kHz, mono
             AudioFormat targetFormat = new AudioFormat(
-                    AudioFormat.Encoding.ULAW, // Değişiklik
-                    8000.0f,                   // 8kHz
-                    8,                         // 8 bit
-                    1,                         // mono
-                    1,                         // 1 byte per frame
-                    8000.0f,                   // frame rate
-                    false);
+                    AudioFormat.Encoding.ULAW, 8000.0f, 8, 1, 1, 8000.0f, false);
 
             return resampleAudio(pcm16Data, sourceFormat, targetFormat);
 
         } catch (Exception e) {
             logger.error("Error converting OpenAI audio to Asterisk format", e);
-            return fallbackDownsample(pcm16Data);
+            return fallbackConvertToUlaw(pcm16Data);
         }
+    }
+
+    private byte[] fallbackConvertToUlaw(byte[] pcm24kHzData) {
+
+        int ratio = 3;
+        byte[] pcm8kHzData = new byte[pcm24kHzData.length / ratio];
+        for (int i = 0, j = 0; i < pcm24kHzData.length - 1 && j < pcm8kHzData.length - 1; i += ratio * 2, j += 2) {
+            if (i + 1 < pcm24kHzData.length) {
+                pcm8kHzData[j] = pcm24kHzData[i];
+                pcm8kHzData[j + 1] = pcm24kHzData[i + 1];
+            }
+        }
+
+
+        byte[] ulawData = new byte[pcm8kHzData.length / 2];
+        for (int i = 0, j = 0; i < pcm8kHzData.length - 1; i += 2, j++) {
+
+            short pcmSample = (short) ((pcm8kHzData[i + 1] << 8) | (pcm8kHzData[i] & 0xFF));
+            ulawData[j] = linearToUlaw(pcmSample);
+        }
+        return ulawData;
+    }
+
+    private byte linearToUlaw(short pcm) {
+        final int MAX = 8159;
+        final int BIAS = 132;
+
+        int sign = (pcm >> 8) & 0x80;
+        if (sign != 0) pcm = (short) -pcm;
+        if (pcm > MAX) pcm = MAX;
+
+        int exponent = 7;
+        int expMask = 0x4000;
+        while ((pcm & expMask) == 0 && exponent > 0) {
+            exponent--;
+            expMask >>= 1;
+        }
+
+        int mantissa = (pcm >> (exponent + 3)) & 0x0F;
+        int ulaw = ~(sign | (exponent << 4) | mantissa);
+
+        return (byte) ulaw;
     }
 
 
@@ -55,24 +84,10 @@ public class AudioConversionService {
 
         try {
             AudioFormat sourceFormat = new AudioFormat(
-                    AudioFormat.Encoding.PCM_SIGNED,
-                    8000.0f,   // 8kHz
-                    16,        // 16 bits
-                    1,         // mono
-                    2,         // 2 bytes per frame
-                    8000.0f,   // frame rate
-                    false      // little-endian
-            );
+                    AudioFormat.Encoding.ULAW, 8000.0f, 8, 1, 1, 8000.0f, false);
 
             AudioFormat targetFormat = new AudioFormat(
-                    AudioFormat.Encoding.PCM_SIGNED,
-                    24000.0f,  // 24kHz
-                    16,        // 16 bits
-                    1,         // mono
-                    2,         // 2 bytes per frame
-                    24000.0f,  // frame rate
-                    false      // little-endian
-            );
+                    AudioFormat.Encoding.PCM_SIGNED, 24000.0f, 16, 1, 2, 24000.0f, false);
 
             return resampleAudio(asteriskData, sourceFormat, targetFormat);
 
@@ -96,16 +111,16 @@ public class AudioConversionService {
                 while ((bytesRead = targetStream.read(buffer)) != -1) {
                     baos.write(buffer, 0, bytesRead);
                 }
-
                 targetStream.close();
                 sourceStream.close();
-
                 return baos.toByteArray();
             } else {
                 logger.warn("Direct audio conversion not supported, using fallback method");
                 sourceStream.close();
 
-                if (targetFormat.getSampleRate() > sourceFormat.getSampleRate()) {
+                if (targetFormat.getEncoding().equals(AudioFormat.Encoding.ULAW)) {
+                    return fallbackConvertToUlaw(inputData);
+                } else if (targetFormat.getSampleRate() > sourceFormat.getSampleRate()) {
                     return fallbackUpsample(inputData);
                 } else {
                     return fallbackDownsample(inputData);
@@ -119,35 +134,27 @@ public class AudioConversionService {
 
 
     private byte[] fallbackDownsample(byte[] input) {
-        // Simple 3:1 decimation (24kHz to 8kHz)
         int ratio = 3;
         byte[] output = new byte[input.length / ratio];
-
         for (int i = 0, j = 0; i < input.length - 1 && j < output.length - 1; i += ratio * 2, j += 2) {
-            // Copy every 3rd sample (16-bit = 2 bytes)
             if (i + 1 < input.length) {
                 output[j] = input[i];
                 output[j + 1] = input[i + 1];
             }
         }
-
         return output;
     }
 
 
     private byte[] fallbackUpsample(byte[] input) {
-        // Simple 1:3 interpolation (8kHz to 24kHz)
         int ratio = 3;
         byte[] output = new byte[input.length * ratio];
-
         for (int i = 0, j = 0; i < input.length - 1 && j < output.length - 5; i += 2, j += ratio * 2) {
-            // Repeat each sample 3 times
             for (int k = 0; k < ratio && j + k * 2 + 1 < output.length; k++) {
                 output[j + k * 2] = input[i];
                 output[j + k * 2 + 1] = input[i + 1];
             }
         }
-
         return output;
     }
 
@@ -156,9 +163,7 @@ public class AudioConversionService {
         if (audioData == null || audioData.length == 0) {
             return false;
         }
-
-        // Minimum expected length check (at least 20ms of audio)
-        int minimumBytes = (expectedSampleRate * 2 * 20) / 1000; // 2 bytes per sample, 20ms
+        int minimumBytes = (expectedSampleRate * 2 * 20) / 1000;
         return audioData.length >= minimumBytes;
     }
 
