@@ -141,7 +141,10 @@ public class OpenAiRealtimeService {
 
         ObjectNode sessionConfig = objectMapper.createObjectNode();
 
-        // Modality ayarları - ses ve text
+        // CRITICAL: session.type parametresi eksikti
+        sessionConfig.put("type", "default");
+
+        // Modality ayarları
         ArrayNode modalities = objectMapper.createArrayNode();
         modalities.add("text");
         modalities.add("audio");
@@ -149,20 +152,18 @@ public class OpenAiRealtimeService {
 
         sessionConfig.put("voice", "alloy");
 
-        // Input audio format
+        // Audio format ayarları
         sessionConfig.put("input_audio_format", "pcm16");
         sessionConfig.put("output_audio_format", "pcm16");
 
-        // Ses tanıma ayarları
-        sessionConfig.put("turn_detection_type", "server_vad");
+        // Turn detection ayarları
+        ObjectNode turnDetection = objectMapper.createObjectNode();
+        turnDetection.put("type", "server_vad");
+        turnDetection.put("threshold", 0.5);
+        turnDetection.put("prefix_padding_ms", 300);
+        turnDetection.put("silence_duration_ms", 500);
+        sessionConfig.set("turn_detection", turnDetection);
 
-        ObjectNode vadConfig = objectMapper.createObjectNode();
-        vadConfig.put("threshold", 0.5);
-        vadConfig.put("prefix_padding_ms", 300);
-        vadConfig.put("silence_duration_ms", 500);
-        sessionConfig.set("turn_detection", vadConfig);
-
-        // Sistem talimatları
         String systemMessage = "Sen bir sekretersin. Türkçe konuşuyorsun. Kısa ve öz cevaplar veriyorsun. " +
                 "Arayan kişinin adını, telefon numarasını ve mesajını alıp kaydetmelisin. " +
                 "Gerektiğinde randevu alabilirsin.";
@@ -171,10 +172,10 @@ public class OpenAiRealtimeService {
         // Sıcaklık ayarı
         sessionConfig.put("temperature", 0.7);
 
-        // Tools tanımlaması
+        sessionConfig.put("max_response_output_tokens", 4096);
+
         ArrayNode tools = objectMapper.createArrayNode();
 
-        // Mesaj kaydetme tool
         ObjectNode saveMessageTool = objectMapper.createObjectNode();
         saveMessageTool.put("type", "function");
         ObjectNode saveMessageFunction = objectMapper.createObjectNode();
@@ -202,7 +203,11 @@ public class OpenAiRealtimeService {
 
         ObjectNode priority = objectMapper.createObjectNode();
         priority.put("type", "string");
-        priority.put("enum", objectMapper.createArrayNode().add("düşük").add("orta").add("yüksek"));
+        ArrayNode enumValues = objectMapper.createArrayNode();
+        enumValues.add("düşük");
+        enumValues.add("orta");
+        enumValues.add("yüksek");
+        priority.set("enum", enumValues);
         priority.put("description", "Mesajın öncelik seviyesi");
         saveMessageProps.set("priority", priority);
 
@@ -217,7 +222,6 @@ public class OpenAiRealtimeService {
         saveMessageTool.set("function", saveMessageFunction);
         tools.add(saveMessageTool);
 
-
         ObjectNode appointmentTool = objectMapper.createObjectNode();
         appointmentTool.put("type", "function");
         ObjectNode appointmentFunction = objectMapper.createObjectNode();
@@ -227,6 +231,11 @@ public class OpenAiRealtimeService {
         ObjectNode appointmentParams = objectMapper.createObjectNode();
         appointmentParams.put("type", "object");
         ObjectNode appointmentProps = objectMapper.createObjectNode();
+
+        ObjectNode callerNameAppt = objectMapper.createObjectNode();
+        callerNameAppt.put("type", "string");
+        callerNameAppt.put("description", "Hasta adı");
+        appointmentProps.set("caller_name", callerNameAppt);
 
         ObjectNode appointmentDate = objectMapper.createObjectNode();
         appointmentDate.put("type", "string");
@@ -245,6 +254,7 @@ public class OpenAiRealtimeService {
 
         appointmentParams.set("properties", appointmentProps);
         ArrayNode appointmentRequired = objectMapper.createArrayNode();
+        appointmentRequired.add("caller_name");
         appointmentRequired.add("date");
         appointmentRequired.add("time");
         appointmentParams.set("required", appointmentRequired);
