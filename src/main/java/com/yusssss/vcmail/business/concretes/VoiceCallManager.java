@@ -404,7 +404,7 @@ public class VoiceCallManager {
 
             // Dosya adını oluştur (örn: recording_xxxx-xxxx-xxxx-xxxx.wav)
             String fileName = "recording_" + conversationId + ".wav";
-            java.io.File outputFile = new java.io.File(fileName);
+            java.io.File outputFile = new java.io.File("/kayitlar/" + fileName);
 
             // AudioInputStream'i bir WAV dosyasına yaz
             AudioSystem.write(audioInputStream, javax.sound.sampled.AudioFileFormat.Type.WAVE, outputFile);

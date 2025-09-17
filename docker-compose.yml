@@ -10,6 +10,8 @@ services:
     depends_on:
       vcmail-db:
         condition: service_healthy
+    volumes:
+      - ./kayitlar:/kayitlar
     networks:
       - nginx-network
 

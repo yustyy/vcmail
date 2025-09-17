@@ -16,4 +16,6 @@ EXPOSE 8080
 
 COPY --from=build /app/target/*.jar /app/app.jar
 
+RUN mkdir /kayitlar
+
 ENTRYPOINT ["java","-jar","/app/app.jar"]
