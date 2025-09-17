@@ -175,7 +175,7 @@ public class OpenAiRealtimeService {
         turnDetection.put("threshold", 0.5);
         turnDetection.put("prefix_padding_ms", 300);
         turnDetection.put("silence_duration_ms", 500);
-        sessionConfig.set("turn_detection", turnDetection);
+        //sessionConfig.set("turn_detection", turnDetection);
 
         // Tools - function definitions
         ArrayNode tools = objectMapper.createArrayNode();
