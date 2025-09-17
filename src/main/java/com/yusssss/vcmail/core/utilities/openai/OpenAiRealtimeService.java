@@ -22,6 +22,8 @@ public class OpenAiRealtimeService {
     private final Logger logger = LoggerFactory.getLogger(OpenAiRealtimeService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    private volatile boolean isSessionConfigured = false;
+
 
 
     @Value("${openai.api.key}")
@@ -39,6 +41,7 @@ public class OpenAiRealtimeService {
                 @Override
                 public void onOpen(ServerHandshake serverHandshake) {
                     logger.info("SUCCESS: WebSocket connection opened");
+                    isSessionConfigured = false;
                     sendSessionUpdate();
 
                 }
@@ -90,6 +93,7 @@ public class OpenAiRealtimeService {
 
                             case "session.updated":
                                 logger.info("OpenAI session updated successfully");
+                                isSessionConfigured = true;
                                 break;
 
                             case "input_audio_buffer.speech_started":
@@ -272,7 +276,7 @@ public class OpenAiRealtimeService {
     }
 
     public void sendAudio(byte[] audioData) {
-        if (webSocketClient != null && webSocketClient.isOpen()) {
+        if (webSocketClient != null && webSocketClient.isOpen() && isSessionConfigured) {
 
             logger.debug("OpenAI'a gönderilmek üzere {} byte Base64'e çevriliyor.", audioData.length);
 
@@ -336,10 +340,26 @@ public class OpenAiRealtimeService {
 
 
     public void triggerInitialResponse() {
-        if (webSocketClient != null && webSocketClient.isOpen()) {
-            ObjectNode responseEvent = objectMapper.createObjectNode();
-            responseEvent.put("type", "response.create");
-            sendJson(responseEvent);
-        }
+        new Thread(() -> {
+            try {
+                int attempts = 0;
+                while (!isSessionConfigured && attempts < 100) { // Max 10 saniye bekle
+                    Thread.sleep(100);
+                    attempts++;
+                }
+
+                if (isSessionConfigured && webSocketClient != null && webSocketClient.isOpen()) {
+                    logger.info("Session is configured. Triggering initial response now.");
+                    ObjectNode responseEvent = objectMapper.createObjectNode();
+                    responseEvent.put("type", "response.create");
+                    sendJson(responseEvent);
+                } else {
+                    logger.error("Failed to trigger initial response: Session not configured in time.");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Trigger initial response thread interrupted.", e);
+            }
+        }).start();
     }
 }
