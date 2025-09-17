@@ -133,7 +133,7 @@ public class VoiceCallManager {
         }
 
 
-        int asteriskMediaPort = externalMediaChannel.path("external_media").path("local_port").asInt();
+        int asteriskMediaPort = externalMediaChannel.path("channelvars").path("UNICASTRTP_LOCAL_PORT").asInt();
         if (asteriskMediaPort == 0) {
             logger.error("[{}] ❌ Could not get Asterisk's media port. ASTERISK'S RESPONSE WAS: {}", conversationId, externalMediaChannel.toPrettyString());
             endCall(conversationId, channelId, "MEDIA_PORT_FAILED", true);
