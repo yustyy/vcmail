@@ -1,146 +1,122 @@
 package com.yusssss.vcmail.core.utilities.audio;
 
+import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
+import be.tarsos.dsp.resample.Resampler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 @Service
 public class AudioConversionService {
 
     private static final Logger logger = LoggerFactory.getLogger(AudioConversionService.class);
 
-    // -------------------------------
-    // OpenAI PCM 24kHz -> Asterisk μ-law 8kHz
-    // -------------------------------
+    // OpenAI -> Asterisk (24kHz 16-bit PCM -> 8kHz 8-bit ULAW)
     public byte[] convertOpenAiToAsterisk(byte[] pcm24kHzData) {
         if (pcm24kHzData == null || pcm24kHzData.length == 0) return new byte[0];
-
         try {
-            // 1️⃣ PCM24kHz -> PCM8kHz
-            short[] pcm16 = bytesToShorts(pcm24kHzData);
-            short[] resampled = resampleLinear(pcm16, 24000, 8000);
-
-            // 2️⃣ PCM16 -> μ-law
-            return pcm16ToUlaw(resampled);
+            byte[] pcm8kHzData = resamplePcm(pcm24kHzData, 24000, 8000);
+            return pcmToUlaw(pcm8kHzData);
         } catch (Exception e) {
             logger.error("Error converting OpenAI audio to Asterisk format", e);
             return new byte[0];
         }
     }
 
-    // -------------------------------
-    // Asterisk μ-law 8kHz -> OpenAI PCM 24kHz
-    // -------------------------------
+    // Asterisk -> OpenAI (8kHz 8-bit ULAW -> 24kHz 16-bit PCM)
     public byte[] convertAsteriskToOpenAi(byte[] ulaw8kHzData) {
         if (ulaw8kHzData == null || ulaw8kHzData.length == 0) return new byte[0];
-
         try {
-            // 1️⃣ μ-law -> PCM16
-            short[] pcm8kHz = ulawToPcm16(ulaw8kHzData);
-
-            // 2️⃣ PCM8kHz -> PCM24kHz
-            short[] pcm24kHz = resampleLinear(pcm8kHz, 8000, 24000);
-
-            return shortsToBytes(pcm24kHz);
+            byte[] pcm8kHzData = ulawToPcm(ulaw8kHzData);
+            return resamplePcm(pcm8kHzData, 8000, 24000);
         } catch (Exception e) {
             logger.error("Error converting Asterisk audio to OpenAI format", e);
             return new byte[0];
         }
     }
 
-    // -------------------------------
-    // Yardımcı Metotlar
-    // -------------------------------
-
-    private short[] bytesToShorts(byte[] bytes) {
-        short[] shorts = new short[bytes.length / 2];
-        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts);
-        return shorts;
+    private byte[] pcmToUlaw(byte[] pcmData) {
+        return convertWithJavaSound(pcmData,
+                new AudioFormat(8000, 16, 1, true, false),
+                new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false));
     }
 
-    private byte[] shortsToBytes(short[] shorts) {
-        ByteBuffer buffer = ByteBuffer.allocate(shorts.length * 2).order(ByteOrder.LITTLE_ENDIAN);
-        buffer.asShortBuffer().put(shorts);
+    private byte[] ulawToPcm(byte[] ulawData) {
+        return convertWithJavaSound(ulawData,
+                new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false),
+                new AudioFormat(8000, 16, 1, true, false));
+    }
+
+    private byte[] convertWithJavaSound(byte[] sourceBytes, AudioFormat sourceFormat, AudioFormat targetFormat) {
+        try (
+                ByteArrayInputStream bais = new ByteArrayInputStream(sourceBytes);
+                AudioInputStream sourceStream = new AudioInputStream(bais, sourceFormat, sourceBytes.length / sourceFormat.getFrameSize());
+                AudioInputStream targetStream = AudioSystem.getAudioInputStream(targetFormat, sourceStream);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream()
+        ) {
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = targetStream.read(buffer)) != -1) {
+                baos.write(buffer, 0, bytesRead);
+            }
+            return baos.toByteArray();
+        } catch (Exception e) {
+            logger.error("JavaSound conversion failed from {} to {}", sourceFormat, targetFormat, e);
+            return new byte[0];
+        }
+    }
+
+    private byte[] resamplePcm(byte[] pcmData, int sourceRate, int targetRate) {
+        float[] samples = bytesToFloats(pcmData);
+        Resampler resampler = new Resampler(false, 0.9, 4.0);
+
+        float[] resampled = new float[(int) (samples.length * ((double)targetRate/sourceRate))];
+        resampler.process((double)targetRate/sourceRate, samples, 0, samples.length, false, resampled, 0, resampled.length);
+
+        return floatsToBytes(resampled);
+    }
+
+    private float[] bytesToFloats(byte[] pcmBytes) {
+        short[] shortSamples = new short[pcmBytes.length / 2];
+        ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortSamples);
+
+        float[] floatSamples = new float[shortSamples.length];
+        for(int i = 0; i < shortSamples.length; i++){
+            floatSamples[i] = shortSamples[i] / 32768.0f;
+        }
+        return floatSamples;
+    }
+
+    private byte[] floatsToBytes(float[] floatSamples) {
+        ByteBuffer buffer = ByteBuffer.allocate(floatSamples.length * 2);
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        for(float sample : floatSamples){
+            buffer.putShort((short) (sample * 32767.0));
+        }
         return buffer.array();
     }
 
-    // -------------------------------
-    // PCM16 <-> μ-law
-    // -------------------------------
-    private byte[] pcm16ToUlaw(short[] pcm) {
-        byte[] ulaw = new byte[pcm.length];
-        for (int i = 0; i < pcm.length; i++) {
-            ulaw[i] = linearToUlaw(pcm[i]);
-        }
-        return ulaw;
-    }
 
-    private short[] ulawToPcm16(byte[] ulaw) {
-        short[] pcm = new short[ulaw.length];
-        for (int i = 0; i < ulaw.length; i++) {
-            pcm[i] = ulawToLinear(ulaw[i]);
-        }
-        return pcm;
-    }
-
-    // μ-law algoritması (A-law yerine)
-    private static byte linearToUlaw(short sample) {
-        final int BIAS = 0x84;
-        final int CLIP = 32635;
-        int sign = (sample >> 8) & 0x80;
-        if (sign != 0) sample = (short) -sample;
-        if (sample > CLIP) sample = CLIP;
-        sample += BIAS;
-
-        int exponent = 7;
-        for (int expMask = 0x4000; (sample & expMask) == 0 && exponent > 0; exponent--, expMask >>= 1);
-
-        int mantissa = (sample >> (exponent + 3)) & 0x0F;
-        return (byte) ~(sign | (exponent << 4) | mantissa);
-    }
-
-    private static short ulawToLinear(byte ulawByte) {
-        final int BIAS = 0x84;
-        ulawByte = (byte) ~ulawByte;
-        int sign = ulawByte & 0x80;
-        int exponent = (ulawByte >> 4) & 0x07;
-        int mantissa = ulawByte & 0x0F;
-        int sample = ((mantissa << 3) + 0x84) << exponent;
-        return (short) (sign != 0 ? -sample : sample);
-    }
-
-    // -------------------------------
-    // Basit lineer yeniden örnekleme
-    // -------------------------------
-    private short[] resampleLinear(short[] input, int srcRate, int targetRate) {
-        int outputLength = (int) ((long) input.length * targetRate / srcRate);
-        short[] output = new short[outputLength];
-
-        for (int i = 0; i < outputLength; i++) {
-            float srcIndex = ((float) i * srcRate) / targetRate;
-            int index0 = (int) Math.floor(srcIndex);
-            int index1 = Math.min(index0 + 1, input.length - 1);
-            float frac = srcIndex - index0;
-            output[i] = (short) ((1 - frac) * input[index0] + frac * input[index1]);
-        }
-
-        return output;
-    }
-
-    // -------------------------------
-    // Ses normalizasyonu (PCM16)
-    // -------------------------------
     public byte[] normalizeVolume(byte[] audioData, float targetLevel) {
         if (audioData == null || audioData.length < 2) return audioData;
 
-        short[] samples = bytesToShorts(audioData);
-        long sum = 0;
-        for (short s : samples) sum += (long) s * s;
+        int sampleCount = audioData.length / 2;
+        short[] samples = new short[sampleCount];
+        ByteBuffer.wrap(audioData).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(samples);
 
-        double rms = Math.sqrt((double) sum / samples.length);
+        long sum = 0;
+        for (short sample : samples) sum += (long) sample * sample;
+
+        double rms = Math.sqrt((double) sum / sampleCount);
         if (rms == 0) return audioData;
 
         double targetRms = targetLevel * Short.MAX_VALUE;
@@ -148,12 +124,13 @@ public class AudioConversionService {
         if (gain > 4.0) gain = 4.0;
         if (gain < 0.1) gain = 0.1;
 
+        byte[] normalizedData = new byte[audioData.length];
         for (int i = 0; i < samples.length; i++) {
             int amplified = (int) (samples[i] * gain);
             amplified = Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, amplified));
-            samples[i] = (short) amplified;
+            normalizedData[i * 2] = (byte) (amplified & 0xFF);
+            normalizedData[i * 2 + 1] = (byte) ((amplified >> 8) & 0xFF);
         }
-
-        return shortsToBytes(samples);
+        return normalizedData;
     }
 }
