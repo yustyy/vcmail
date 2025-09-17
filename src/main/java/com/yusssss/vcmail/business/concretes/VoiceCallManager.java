@@ -130,22 +130,16 @@ public class VoiceCallManager {
     }
 
     private void setupAudioPipeline(String conversationId, RtpListener rtpListener) {
-        // Asterisk'ten gelen ses -> OpenAI'ye gönder
         rtpListener.onAudioData(audioData -> {
             try {
-                // Asterisk audio'yu OpenAI formatına dönüştür
+                // Asterisk'ten gelen ses direkt işlensin
                 byte[] convertedAudio = audioConversionService.convertAsteriskToOpenAi(audioData);
 
-                // Audio kalitesini kontrol et
-                if (audioConversionService.isValidAudioData(convertedAudio, 24000)) {
-                    // Volume normalize et
+                if (convertedAudio != null && convertedAudio.length > 0) {
                     byte[] normalizedAudio = audioConversionService.normalizeVolume(convertedAudio, 0.7f);
-
-                    // OpenAI'ye gönder
                     openAiRealtimeService.sendAudio(normalizedAudio);
-                    logger.trace("[{}] 🎤 Audio sent to OpenAI: {} bytes", conversationId, normalizedAudio.length);
-                } else {
-                    logger.debug("[{}] ⚠️ Invalid audio data received, skipping", conversationId);
+
+                    logger.debug("[{}] 🎤 Audio sent to OpenAI: {} bytes", conversationId, normalizedAudio.length);
                 }
             } catch (Exception e) {
                 logger.error("[{}] ❌ Error processing incoming audio", conversationId, e);
