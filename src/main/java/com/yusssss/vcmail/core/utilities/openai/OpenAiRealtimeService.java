@@ -33,7 +33,7 @@ public class OpenAiRealtimeService {
 
     public void startSession(Consumer<byte[]> onAudioReceived, Consumer<JsonNode> onToolCall, Consumer<String> onClose){
 
-        String url = "wss://api.openai.com/v1/realtime?model=gpt-realtime";
+        String url = "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview";
         try{
             webSocketClient = new WebSocketClient(new URI(url)) {
                 @Override
@@ -141,22 +141,35 @@ public class OpenAiRealtimeService {
 
         ObjectNode sessionConfig = objectMapper.createObjectNode();
 
-        // CRITICAL: session.type parametresi eksikti
+        // Session type - realtime API için
         sessionConfig.put("type", "realtime");
 
-        // Modality ayarları
-        ArrayNode modalities = objectMapper.createArrayNode();
-        modalities.add("text");
-        modalities.add("audio");
-        sessionConfig.set("modalities", modalities);
+        // Model specification
+        sessionConfig.put("model", "gpt-4o-mini-realtime-preview");
 
-        sessionConfig.put("voice", "alloy");
+        // Voice settings - audio output configuration
+        ObjectNode audioOutput = objectMapper.createObjectNode();
+        audioOutput.put("voice", "alloy");
+        audioOutput.put("format", "pcm16");
 
-        // Audio format ayarları
-        sessionConfig.put("input_audio_format", "pcm16");
-        sessionConfig.put("output_audio_format", "pcm16");
+        ObjectNode audio = objectMapper.createObjectNode();
+        audio.set("output", audioOutput);
+        sessionConfig.set("audio", audio);
 
-        // Turn detection ayarları
+        // Instructions - system message
+        String systemMessage = "Sen bir sekretersin. Türkçe konuşuyorsun. Kısa ve öz cevaplar veriyorsun. " +
+                "İlk konuşmada 'Merhaba, klinik sekreterine hoş geldiniz. Ben Elara, size nasıl yardımcı olabilirim?' diye karşıla. " +
+                "Arayan kişinin adını, telefon numarasını ve mesajını alıp kaydetmelisin. " +
+                "Gerektiğinde randevu alabilirsin.";
+        sessionConfig.put("instructions", systemMessage);
+
+        // Temperature
+        sessionConfig.put("temperature", 0.7);
+
+        // Max tokens
+        sessionConfig.put("max_output_tokens", 4096);
+
+        // Turn detection - voice activity detection
         ObjectNode turnDetection = objectMapper.createObjectNode();
         turnDetection.put("type", "server_vad");
         turnDetection.put("threshold", 0.5);
@@ -164,95 +177,93 @@ public class OpenAiRealtimeService {
         turnDetection.put("silence_duration_ms", 500);
         sessionConfig.set("turn_detection", turnDetection);
 
-        String systemMessage = "Sen bir sekretersin. Türkçe konuşuyorsun. Kısa ve öz cevaplar veriyorsun. " +
-                "Arayan kişinin adını, telefon numarasını ve mesajını alıp kaydetmelisin. " +
-                "Gerektiğinde randevu alabilirsin.";
-        sessionConfig.put("instructions", systemMessage);
-
-        // Sıcaklık ayarı
-        sessionConfig.put("temperature", 0.7);
-
-        sessionConfig.put("max_response_output_tokens", 4096);
-
+        // Tools - function definitions
         ArrayNode tools = objectMapper.createArrayNode();
 
+        // Save message tool
         ObjectNode saveMessageTool = objectMapper.createObjectNode();
         saveMessageTool.put("type", "function");
-        ObjectNode saveMessageFunction = objectMapper.createObjectNode();
-        saveMessageFunction.put("name", "save_caller_message");
-        saveMessageFunction.put("description", "Arayan kişinin mesajını ve bilgilerini kaydet");
 
-        ObjectNode saveMessageParams = objectMapper.createObjectNode();
-        saveMessageParams.put("type", "object");
-        ObjectNode saveMessageProps = objectMapper.createObjectNode();
+        ObjectNode saveFunction = objectMapper.createObjectNode();
+        saveFunction.put("name", "save_caller_message");
+        saveFunction.put("description", "Arayan kişinin mesajını ve bilgilerini kaydet");
+
+        ObjectNode saveParams = objectMapper.createObjectNode();
+        saveParams.put("type", "object");
+
+        ObjectNode saveProperties = objectMapper.createObjectNode();
 
         ObjectNode callerName = objectMapper.createObjectNode();
         callerName.put("type", "string");
         callerName.put("description", "Arayan kişinin adı");
-        saveMessageProps.set("caller_name", callerName);
+        saveProperties.set("caller_name", callerName);
 
         ObjectNode callerPhone = objectMapper.createObjectNode();
         callerPhone.put("type", "string");
         callerPhone.put("description", "Arayan kişinin telefon numarası");
-        saveMessageProps.set("caller_phone", callerPhone);
+        saveProperties.set("caller_phone", callerPhone);
 
         ObjectNode message = objectMapper.createObjectNode();
         message.put("type", "string");
         message.put("description", "Arayan kişinin bıraktığı mesaj");
-        saveMessageProps.set("message", message);
+        saveProperties.set("message", message);
 
         ObjectNode priority = objectMapper.createObjectNode();
         priority.put("type", "string");
-        ArrayNode enumValues = objectMapper.createArrayNode();
-        enumValues.add("düşük");
-        enumValues.add("orta");
-        enumValues.add("yüksek");
-        priority.set("enum", enumValues);
+        ArrayNode priorityEnum = objectMapper.createArrayNode();
+        priorityEnum.add("düşük");
+        priorityEnum.add("orta");
+        priorityEnum.add("yüksek");
+        priority.set("enum", priorityEnum);
         priority.put("description", "Mesajın öncelik seviyesi");
-        saveMessageProps.set("priority", priority);
+        saveProperties.set("priority", priority);
 
-        saveMessageParams.set("properties", saveMessageProps);
+        saveParams.set("properties", saveProperties);
 
-        ArrayNode required = objectMapper.createArrayNode();
-        required.add("caller_name");
-        required.add("message");
-        saveMessageParams.set("required", required);
+        ArrayNode saveRequired = objectMapper.createArrayNode();
+        saveRequired.add("caller_name");
+        saveRequired.add("message");
+        saveParams.set("required", saveRequired);
 
-        saveMessageFunction.set("parameters", saveMessageParams);
-        saveMessageTool.set("function", saveMessageFunction);
+        saveFunction.set("parameters", saveParams);
+        saveMessageTool.set("function", saveFunction);
         tools.add(saveMessageTool);
 
+        // Schedule appointment tool
         ObjectNode appointmentTool = objectMapper.createObjectNode();
         appointmentTool.put("type", "function");
+
         ObjectNode appointmentFunction = objectMapper.createObjectNode();
         appointmentFunction.put("name", "schedule_appointment");
-        appointmentFunction.put("description", "Arayan kişi için randevu al");
+        appointmentFunction.put("description", "Arayan kişi için randevu ayarla");
 
         ObjectNode appointmentParams = objectMapper.createObjectNode();
         appointmentParams.put("type", "object");
-        ObjectNode appointmentProps = objectMapper.createObjectNode();
 
-        ObjectNode callerNameAppt = objectMapper.createObjectNode();
-        callerNameAppt.put("type", "string");
-        callerNameAppt.put("description", "Hasta adı");
-        appointmentProps.set("caller_name", callerNameAppt);
+        ObjectNode appointmentProperties = objectMapper.createObjectNode();
+
+        ObjectNode patientName = objectMapper.createObjectNode();
+        patientName.put("type", "string");
+        patientName.put("description", "Hasta adı soyadı");
+        appointmentProperties.set("caller_name", patientName);
 
         ObjectNode appointmentDate = objectMapper.createObjectNode();
         appointmentDate.put("type", "string");
-        appointmentDate.put("description", "Randevu tarihi (YYYY-MM-DD)");
-        appointmentProps.set("date", appointmentDate);
+        appointmentDate.put("description", "Randevu tarihi (YYYY-MM-DD formatında)");
+        appointmentProperties.set("date", appointmentDate);
 
         ObjectNode appointmentTime = objectMapper.createObjectNode();
         appointmentTime.put("type", "string");
-        appointmentTime.put("description", "Randevu saati (HH:MM)");
-        appointmentProps.set("time", appointmentTime);
+        appointmentTime.put("description", "Randevu saati (HH:MM formatında)");
+        appointmentProperties.set("time", appointmentTime);
 
         ObjectNode appointmentPurpose = objectMapper.createObjectNode();
         appointmentPurpose.put("type", "string");
-        appointmentPurpose.put("description", "Randevu amacı");
-        appointmentProps.set("purpose", appointmentPurpose);
+        appointmentPurpose.put("description", "Randevu amacı veya şikayeti");
+        appointmentProperties.set("purpose", appointmentPurpose);
 
-        appointmentParams.set("properties", appointmentProps);
+        appointmentParams.set("properties", appointmentProperties);
+
         ArrayNode appointmentRequired = objectMapper.createArrayNode();
         appointmentRequired.add("caller_name");
         appointmentRequired.add("date");
@@ -266,7 +277,15 @@ public class OpenAiRealtimeService {
         sessionConfig.set("tools", tools);
 
         session.set("session", sessionConfig);
-        sendJson(session);
+
+        String jsonString;
+        try {
+            jsonString = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(session);
+            logger.info("Sending session config: {}", jsonString);
+            sendJson(session);
+        } catch (Exception e) {
+            logger.error("Failed to serialize session config", e);
+        }
 
         logger.info("OpenAI session configuration sent successfully");
     }
