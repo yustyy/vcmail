@@ -18,6 +18,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
@@ -39,6 +44,10 @@ public class VoiceCallManager {
     private final Map<String, String> channelIdToConversationIdMap = new ConcurrentHashMap<>();
     private final Map<String, String> conversationIdToMediaChannelIdMap = new ConcurrentHashMap<>();
     private final Map<String, String> conversationIdToCallerNumberMap = new ConcurrentHashMap<>();
+
+
+
+    private final Map<String, ByteArrayOutputStream> conversationAudioBuffers = new ConcurrentHashMap<>();
 
     @Value("${asterisk.ari.rtp-host}")
     private String rtpHost;
@@ -86,6 +95,10 @@ public class VoiceCallManager {
         // Conversation oluştur
         Conversation conversation = conversationService.startConversation();
         String conversationId = conversation.getId();
+
+        conversationAudioBuffers.put(conversationId, new ByteArrayOutputStream());
+
+
         channelIdToConversationIdMap.put(channelId, conversationId);
         conversationIdToCallerNumberMap.put(conversationId, callerNumber);
 
@@ -132,7 +145,16 @@ public class VoiceCallManager {
     private void setupAudioPipeline(String conversationId, RtpListener rtpListener) {
         rtpListener.onAudioData(audioData -> {
             try {
-                // Asterisk'ten gelen ses direkt işlensin
+
+                ByteArrayOutputStream audioBuffer = conversationAudioBuffers.get(conversationId);
+                if (audioBuffer != null) {
+                    try {
+                        audioBuffer.write(audioData);
+                    } catch (Exception e) {
+                        logger.error("[{}] Sesi tampona yazarken hata oluştu", conversationId, e);
+                    }
+                }
+
                 byte[] convertedAudio = audioConversionService.convertAsteriskToOpenAi(audioData);
 
                 if (convertedAudio != null && convertedAudio.length > 0) {
@@ -327,6 +349,9 @@ public class VoiceCallManager {
         if (channelIdToConversationIdMap.remove(channelId) != null) {
             logger.info("[{}] 🧹 Cleaning up call resources - Status: {}", conversationId, status);
 
+
+            saveConversationAudioToFile(conversationId);
+
             // RTP resources temizle
             rtpListenerFactory.stopListener(conversationId);
             rtpAudioSender.closeSender(conversationId);
@@ -356,6 +381,40 @@ public class VoiceCallManager {
             System.out.println("📱 Channel ID: " + channelId);
             System.out.println("📊 Durum: " + status);
             System.out.println("=".repeat(60) + "\n");
+        }
+    }
+
+    private void saveConversationAudioToFile(String conversationId) {
+        // Arama için biriktirilen ses tamponunu al ve map'ten sil
+        ByteArrayOutputStream audioBuffer = conversationAudioBuffers.remove(conversationId);
+        if (audioBuffer == null || audioBuffer.size() == 0) {
+            logger.warn("[{}] Kaydedilecek ses verisi bulunamadı.", conversationId);
+            return;
+        }
+
+        try {
+            byte[] audioBytes = audioBuffer.toByteArray();
+
+            // Asterisk'ten gelen ham sesin formatını tanımla (8kHz, ULAW, mono)
+            AudioFormat audioFormat = new AudioFormat(AudioFormat.Encoding.ULAW, 8000.0f, 8, 1, 1, 8000.0f, false);
+
+            // Ham ses verisini bir AudioInputStream'e çevir
+            ByteArrayInputStream bais = new ByteArrayInputStream(audioBytes);
+            AudioInputStream audioInputStream = new AudioInputStream(bais, audioFormat, audioBytes.length / audioFormat.getFrameSize());
+
+            // Dosya adını oluştur (örn: recording_xxxx-xxxx-xxxx-xxxx.wav)
+            String fileName = "recording_" + conversationId + ".wav";
+            java.io.File outputFile = new java.io.File(fileName);
+
+            // AudioInputStream'i bir WAV dosyasına yaz
+            AudioSystem.write(audioInputStream, javax.sound.sampled.AudioFileFormat.Type.WAVE, outputFile);
+
+            logger.info("📞 Ses kaydı kaydedildi: {}", outputFile.getAbsolutePath());
+
+            audioInputStream.close();
+
+        } catch (Exception e) {
+            logger.error("[{}] Ses kaydı dosyaya yazılırken hata oluştu.", conversationId, e);
         }
     }
 
