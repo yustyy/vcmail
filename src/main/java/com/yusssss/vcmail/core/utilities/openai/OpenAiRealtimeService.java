@@ -164,7 +164,7 @@ public class OpenAiRealtimeService {
         sessionConfig.put("instructions", systemMessage);
 
         // Temperature
-        sessionConfig.put("temperature", 0.7);
+        //sessionConfig.put("temperature", 0.7);
 
         // Max tokens
         sessionConfig.put("max_output_tokens", 4096);
