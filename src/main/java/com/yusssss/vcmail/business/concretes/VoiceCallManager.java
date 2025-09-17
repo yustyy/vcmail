@@ -156,6 +156,9 @@ public class VoiceCallManager {
         openAiRealtimeService.startSession(
                 // OpenAI'den gelen ses -> Asterisk'e gönder
                 audioBytes -> {
+
+                    logger.debug("OpenAI'dan {} byte ses verisi alındı. Asterisk'e gönderilecek.", audioBytes.length);
+
                     try {
                         // OpenAI audio'yu Asterisk formatına dönüştür
                         byte[] convertedAudio = audioConversionService.convertOpenAiToAsterisk(audioBytes);

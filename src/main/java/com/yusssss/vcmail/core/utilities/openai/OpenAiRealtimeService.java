@@ -270,6 +270,9 @@ public class OpenAiRealtimeService {
 
     public void sendAudio(byte[] audioData) {
         if (webSocketClient != null && webSocketClient.isOpen()) {
+
+            logger.debug("OpenAI'a gönderilmek üzere {} byte Base64'e çevriliyor.", audioData.length);
+
             ObjectNode audioEvent = objectMapper.createObjectNode();
             audioEvent.put("type", "input_audio_buffer.append");
             audioEvent.put("audio", Base64.getEncoder().encodeToString(audioData));

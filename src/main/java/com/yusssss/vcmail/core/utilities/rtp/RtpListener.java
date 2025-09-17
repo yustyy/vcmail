@@ -58,6 +58,8 @@ public class RtpListener implements Runnable {
                     byte[] audioData = new byte[payloadLength];
                     System.arraycopy(packet.getData(), packet.getOffset() + payloadOffset, audioData, 0, payloadLength);
 
+                    logger.debug("[{}] RTP'den {} byte ses verisi alındı.", callId, audioData.length);
+
                     onAudioData.accept(audioData);
                 }
             }

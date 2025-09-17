@@ -30,6 +30,9 @@ public class RtpAudioSender {
     public void sendAudio(String conversationId, byte[] audioData) {
         RtpSenderInstance sender = senders.get(conversationId);
         if (sender != null) {
+
+            logger.debug("[{}] {} byte ses verisi RTP üzerinden Asterisk'e gönderiliyor.", conversationId, audioData.length);
+
             sender.sendAudio(audioData);
         } else {
             logger.warn("[{}] No RTP sender found for conversation", conversationId);
