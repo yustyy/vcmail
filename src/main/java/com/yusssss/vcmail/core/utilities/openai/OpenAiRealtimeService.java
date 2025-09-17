@@ -148,25 +148,18 @@ public class OpenAiRealtimeService {
 
         // Girdi (Input) Ses Ayarları
         ObjectNode audioInput = objectMapper.createObjectNode();
-
-        // Asterisk'ten 8kHz slin16 formatında gelen sesi 24kHz'e çevirdiğiniz için
-        // OpenAI'a gönderdiğiniz formatı belirtmelisiniz.
-        // AudioConversionService'iniz bunu 24kHz PCM'e çeviriyor.
         ObjectNode inputFormat = objectMapper.createObjectNode();
         inputFormat.put("type", "audio/pcm");
-        inputFormat.put("rate", 24000); // Gönderdiğiniz sesin örnekleme oranı
+        inputFormat.put("rate", 24000);
         audioInput.set("format", inputFormat);
 
-        // Turn detection ayarı 'audio.input' altına taşındı
         ObjectNode turnDetection = objectMapper.createObjectNode();
         turnDetection.put("type", "server_vad");
         turnDetection.put("threshold", 0.5);
         turnDetection.put("prefix_padding_ms", 300);
         turnDetection.put("silence_duration_ms", 500);
         audioInput.set("turn_detection", turnDetection);
-
         audio.set("input", audioInput);
-
 
         // Çıktı (Output) Ses Ayarları
         ObjectNode audioOutput = objectMapper.createObjectNode();
@@ -174,8 +167,8 @@ public class OpenAiRealtimeService {
 
         ObjectNode outputFormat = objectMapper.createObjectNode();
         outputFormat.put("type", "audio/pcm");
+        outputFormat.put("rate", 24000); // 'rate' parametresi eklendi
         audioOutput.set("format", outputFormat);
-
         audio.set("output", audioOutput);
 
         sessionConfig.set("audio", audio);
@@ -285,13 +278,10 @@ public class OpenAiRealtimeService {
         tools.add(appointmentTool);
 
         sessionConfig.set("tools", tools);
-
-
         session.set("session", sessionConfig);
 
-        String jsonString;
         try {
-            jsonString = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(session);
+            String jsonString = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(session);
             logger.info("Sending session config: {}", jsonString);
             sendJson(session);
         } catch (Exception e) {
