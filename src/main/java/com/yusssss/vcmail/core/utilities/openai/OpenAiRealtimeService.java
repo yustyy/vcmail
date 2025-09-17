@@ -142,7 +142,7 @@ public class OpenAiRealtimeService {
         ObjectNode sessionConfig = objectMapper.createObjectNode();
 
         // CRITICAL: session.type parametresi eksikti
-        sessionConfig.put("type", "default");
+        sessionConfig.put("type", "realtime");
 
         // Modality ayarları
         ArrayNode modalities = objectMapper.createArrayNode();
