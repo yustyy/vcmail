@@ -132,12 +132,22 @@ public class VoiceCallManager {
             return;
         }
 
+
+        int asteriskMediaPort = externalMediaChannel.path("local_port").asInt();
+        if (asteriskMediaPort == 0) {
+            logger.error("[{}] ❌ Could not get Asterisk's media port. Ending call.", conversationId);
+            endCall(conversationId, channelId, "MEDIA_PORT_FAILED", true);
+            return;
+        }
+        logger.info("[{}] Asterisk is listening for our audio on port {}", conversationId, asteriskMediaPort);
+
+
         String mediaChannelId = externalMediaChannel.path("id").asText();
         conversationIdToMediaChannelIdMap.put(conversationId, mediaChannelId);
         ariConnectionManager.addChannelToBridge(bridgeId, mediaChannelId);
 
         // RTP Audio Sender oluştur
-        rtpAudioSender.createSender(conversationId, rtpHost, listeningPort);
+        rtpAudioSender.createSender(conversationId, rtpHost, asteriskMediaPort);
 
         // Audio processing pipeline kurulum
         setupAudioPipeline(conversationId, rtpListener);
