@@ -30,16 +30,14 @@ public class AudioConversionService {
                     false      // little-endian
             );
 
-            // Asterisk slin16 format: PCM16, 8kHz, mono
             AudioFormat targetFormat = new AudioFormat(
-                    AudioFormat.Encoding.PCM_SIGNED,
-                    8000.0f,   // 8kHz sample rate
-                    16,        // 16 bits per sample
-                    1,         // mono
-                    2,         // 2 bytes per frame
-                    8000.0f,   // frame rate
-                    false      // little-endian
-            );
+                    AudioFormat.Encoding.ULAW, // Değişiklik
+                    8000.0f,                   // 8kHz
+                    8,                         // 8 bit
+                    1,                         // mono
+                    1,                         // 1 byte per frame
+                    8000.0f,                   // frame rate
+                    false);
 
             return resampleAudio(pcm16Data, sourceFormat, targetFormat);
 

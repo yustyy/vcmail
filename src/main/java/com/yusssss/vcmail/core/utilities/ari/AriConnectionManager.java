@@ -134,7 +134,7 @@ public class AriConnectionManager {
         Map<String, String> body = Map.of(
                 "app", ariApp,
                 "external_host", rtpDestination,
-                "format", "slin16"
+                "format", "ulaw"
         );
 
         try {

@@ -109,7 +109,7 @@ public class RtpAudioSender {
             rtpHeader[0] = (byte) 0x80;
 
             // Marker (0), Payload Type (11 for slin16 or 0 for PCMU)
-            rtpHeader[1] = (byte) 0x0B; // slin16 payload type
+            rtpHeader[1] = (byte) 0x00; // slin16 payload type
 
             // Sequence number (16 bits)
             int seqNum = sequenceNumber.getAndIncrement() & 0xFFFF;
