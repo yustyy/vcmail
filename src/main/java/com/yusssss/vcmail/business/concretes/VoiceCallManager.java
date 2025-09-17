@@ -43,6 +43,10 @@ public class VoiceCallManager {
     @Value("${asterisk.ari.rtp-host}")
     private String rtpHost;
 
+
+    @Value("${asterisk.ari.rtp-app-host}")
+    private String rtpAppHost;
+
     public VoiceCallManager(ConversationService conversationService,
                             OpenAiRealtimeService openAiRealtimeService,
                             AriConnectionManager ariConnectionManager,
@@ -102,7 +106,7 @@ public class VoiceCallManager {
         int listeningPort = rtpListener.getPort();
 
         // External media channel oluştur
-        JsonNode externalMediaChannel = ariConnectionManager.createExternalMediaChannel(rtpHost + ":" + listeningPort);
+        JsonNode externalMediaChannel = ariConnectionManager.createExternalMediaChannel(rtpAppHost + ":" + listeningPort);
         if (externalMediaChannel == null) {
             logger.error("[{}] ❌ Could not create external media channel. Ending call.", conversationId);
             endCall(conversationId, channelId, "MEDIA_CHANNEL_FAILED", true);

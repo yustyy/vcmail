@@ -38,6 +38,7 @@ asterisk:
     password: sifre123
     app: vcmail-app
     rtp-host: 172.19.0.1
+    rtp-app-host: 172.19.0.4
     connection-timeout: 10000
     max-retries: 3
 
