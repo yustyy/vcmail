@@ -140,20 +140,44 @@ public class OpenAiRealtimeService {
         session.put("type", "session.update");
 
         ObjectNode sessionConfig = objectMapper.createObjectNode();
-
-        // Session type - realtime API için
         sessionConfig.put("type", "realtime");
-
-        // Model specification
         sessionConfig.put("model", "gpt-4o-mini-realtime-preview");
 
-        // Voice settings - audio output configuration
+        // --- SES AYARLARI (DÜZELTİLDİ) ---
+        ObjectNode audio = objectMapper.createObjectNode();
+
+        // Girdi (Input) Ses Ayarları
+        ObjectNode audioInput = objectMapper.createObjectNode();
+
+        // Asterisk'ten 8kHz slin16 formatında gelen sesi 24kHz'e çevirdiğiniz için
+        // OpenAI'a gönderdiğiniz formatı belirtmelisiniz.
+        // AudioConversionService'iniz bunu 24kHz PCM'e çeviriyor.
+        ObjectNode inputFormat = objectMapper.createObjectNode();
+        inputFormat.put("type", "audio/pcm");
+        inputFormat.put("rate", 24000); // Gönderdiğiniz sesin örnekleme oranı
+        audioInput.set("format", inputFormat);
+
+        // Turn detection ayarı 'audio.input' altına taşındı
+        ObjectNode turnDetection = objectMapper.createObjectNode();
+        turnDetection.put("type", "server_vad");
+        turnDetection.put("threshold", 0.5);
+        turnDetection.put("prefix_padding_ms", 300);
+        turnDetection.put("silence_duration_ms", 500);
+        audioInput.set("turn_detection", turnDetection);
+
+        audio.set("input", audioInput);
+
+
+        // Çıktı (Output) Ses Ayarları
         ObjectNode audioOutput = objectMapper.createObjectNode();
         audioOutput.put("voice", "alloy");
-        audioOutput.put("format", "pcm16");
 
-        ObjectNode audio = objectMapper.createObjectNode();
+        ObjectNode outputFormat = objectMapper.createObjectNode();
+        outputFormat.put("type", "audio/pcm");
+        audioOutput.set("format", outputFormat);
+
         audio.set("output", audioOutput);
+
         sessionConfig.set("audio", audio);
 
         // Instructions - system message
@@ -163,24 +187,10 @@ public class OpenAiRealtimeService {
                 "Gerektiğinde randevu alabilirsin.";
         sessionConfig.put("instructions", systemMessage);
 
-        // Temperature
-        //sessionConfig.put("temperature", 0.7);
-
         // Max tokens
         sessionConfig.put("max_output_tokens", 4096);
 
-        // Turn detection - voice activity detection
-        ObjectNode turnDetection = objectMapper.createObjectNode();
-        turnDetection.put("type", "server_vad");
-        turnDetection.put("threshold", 0.5);
-        turnDetection.put("prefix_padding_ms", 300);
-        turnDetection.put("silence_duration_ms", 500);
-        //sessionConfig.set("turn_detection", turnDetection);
-
-        // Tools - function definitions
         ArrayNode tools = objectMapper.createArrayNode();
-
-        // Save message tool
         ObjectNode saveMessageTool = objectMapper.createObjectNode();
         saveMessageTool.put("type", "function");
 
@@ -275,6 +285,7 @@ public class OpenAiRealtimeService {
         tools.add(appointmentTool);
 
         sessionConfig.set("tools", tools);
+
 
         session.set("session", sessionConfig);
 
