@@ -45,6 +45,9 @@ public class OpenAiRealtimeService {
 
                 @Override
                 public void onMessage(String message) {
+
+                    logger.info("RAW_FROM_OPENAI: {}", message);
+
                     try{
                         JsonNode event = objectMapper.readTree(message);
                         String type = event.path("type").asText();
