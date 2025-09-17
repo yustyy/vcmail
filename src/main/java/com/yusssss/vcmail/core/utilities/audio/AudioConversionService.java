@@ -1,7 +1,10 @@
 package com.yusssss.vcmail.core.utilities.audio;
 
+import be.tarsos.dsp.AudioDispatcher;
+import be.tarsos.dsp.AudioEvent;
+import be.tarsos.dsp.AudioProcessor;
 import be.tarsos.dsp.io.jvm.JVMAudioInputStream;
-import be.tarsos.dsp.resample.Resampler;
+import be.tarsos.dsp.resample.RateTransposer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -13,7 +16,6 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Arrays;
 
 @Service
 public class AudioConversionService {
@@ -24,8 +26,26 @@ public class AudioConversionService {
     public byte[] convertOpenAiToAsterisk(byte[] pcm24kHzData) {
         if (pcm24kHzData == null || pcm24kHzData.length == 0) return new byte[0];
         try {
-            byte[] pcm8kHzData = resamplePcm(pcm24kHzData, 24000, 8000);
-            return pcmToUlaw(pcm8kHzData);
+            // 1️⃣ Resample 24kHz -> 8kHz
+            byte[] pcm8kHzData = resample(pcm24kHzData, 24000, 8000);
+
+            // 2️⃣ PCM 16-bit -> ULAW 8-bit
+            AudioFormat pcmFormat = new AudioFormat(8000, 16, 1, true, false);
+            AudioFormat ulawFormat = new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false);
+
+            try (ByteArrayInputStream bais = new ByteArrayInputStream(pcm8kHzData);
+                 AudioInputStream pcmStream = new AudioInputStream(bais, pcmFormat, pcm8kHzData.length / pcmFormat.getFrameSize());
+                 AudioInputStream ulawStream = AudioSystem.getAudioInputStream(ulawFormat, pcmStream);
+                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+                while ((bytesRead = ulawStream.read(buffer)) != -1) {
+                    baos.write(buffer, 0, bytesRead);
+                }
+                return baos.toByteArray();
+            }
+
         } catch (Exception e) {
             logger.error("Error converting OpenAI audio to Asterisk format", e);
             return new byte[0];
@@ -36,76 +56,73 @@ public class AudioConversionService {
     public byte[] convertAsteriskToOpenAi(byte[] ulaw8kHzData) {
         if (ulaw8kHzData == null || ulaw8kHzData.length == 0) return new byte[0];
         try {
-            byte[] pcm8kHzData = ulawToPcm(ulaw8kHzData);
-            return resamplePcm(pcm8kHzData, 8000, 24000);
+            AudioFormat ulawFormat = new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false);
+            AudioFormat pcmFormat = new AudioFormat(8000, 16, 1, true, false);
+
+            byte[] pcm8kHzData;
+            try (ByteArrayInputStream bais = new ByteArrayInputStream(ulaw8kHzData);
+                 AudioInputStream ulawStream = new AudioInputStream(bais, ulawFormat, ulaw8kHzData.length / ulawFormat.getFrameSize());
+                 AudioInputStream pcmStream = AudioSystem.getAudioInputStream(pcmFormat, ulawStream);
+                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+                while ((bytesRead = pcmStream.read(buffer)) != -1) {
+                    baos.write(buffer, 0, bytesRead);
+                }
+                pcm8kHzData = baos.toByteArray();
+            }
+
+            return resample(pcm8kHzData, 8000, 24000);
+
         } catch (Exception e) {
             logger.error("Error converting Asterisk audio to OpenAI format", e);
             return new byte[0];
         }
     }
 
-    private byte[] pcmToUlaw(byte[] pcmData) {
-        return convertWithJavaSound(pcmData,
-                new AudioFormat(8000, 16, 1, true, false),
-                new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false));
-    }
+    private byte[] resample(byte[] pcmData, int sourceRate, int targetRate) {
+        try {
+            double rateFactor = (double) targetRate / sourceRate;
 
-    private byte[] ulawToPcm(byte[] ulawData) {
-        return convertWithJavaSound(ulawData,
-                new AudioFormat(AudioFormat.Encoding.ULAW, 8000, 8, 1, 1, 8000, false),
-                new AudioFormat(8000, 16, 1, true, false));
-    }
+            AudioFormat sourceFormat = new AudioFormat(sourceRate, 16, 1, true, false);
+            JVMAudioInputStream jvmStream = new JVMAudioInputStream(
+                    new AudioInputStream(new ByteArrayInputStream(pcmData), sourceFormat, pcmData.length / 2)
+            );
 
-    private byte[] convertWithJavaSound(byte[] sourceBytes, AudioFormat sourceFormat, AudioFormat targetFormat) {
-        try (
-                ByteArrayInputStream bais = new ByteArrayInputStream(sourceBytes);
-                AudioInputStream sourceStream = new AudioInputStream(bais, sourceFormat, sourceBytes.length / sourceFormat.getFrameSize());
-                AudioInputStream targetStream = AudioSystem.getAudioInputStream(targetFormat, sourceStream);
-                ByteArrayOutputStream baos = new ByteArrayOutputStream()
-        ) {
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = targetStream.read(buffer)) != -1) {
-                baos.write(buffer, 0, bytesRead);
-            }
+            AudioDispatcher dispatcher = new AudioDispatcher(jvmStream, 1024, 0);
+            RateTransposer rateTransposer = new RateTransposer(rateFactor);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+            dispatcher.addAudioProcessor(rateTransposer);
+            dispatcher.addAudioProcessor(new AudioProcessor() {
+                @Override
+                public boolean process(AudioEvent audioEvent) {
+                    float[] buffer = audioEvent.getFloatBuffer();
+                    byte[] byteBuffer = new byte[buffer.length * 2];
+                    for (int i = 0; i < buffer.length; i++) {
+                        short val = (short) (buffer[i] * 32767);
+                        byteBuffer[i * 2] = (byte) (val & 0xFF);
+                        byteBuffer[i * 2 + 1] = (byte) ((val >> 8) & 0xFF);
+                    }
+                    try { baos.write(byteBuffer); } catch (Exception ignored) {}
+                    return true;
+                }
+
+                @Override
+                public void processingFinished() {}
+            });
+
+            dispatcher.run();
             return baos.toByteArray();
+
         } catch (Exception e) {
-            logger.error("JavaSound conversion failed from {} to {}", sourceFormat, targetFormat, e);
+            logger.error("Error during resampling from {}Hz to {}Hz", sourceRate, targetRate, e);
             return new byte[0];
         }
     }
 
-    private byte[] resamplePcm(byte[] pcmData, int sourceRate, int targetRate) {
-        float[] samples = bytesToFloats(pcmData);
-        Resampler resampler = new Resampler(false, 0.9, 4.0);
-
-        float[] resampled = new float[(int) (samples.length * ((double)targetRate/sourceRate))];
-        resampler.process((double)targetRate/sourceRate, samples, 0, samples.length, false, resampled, 0, resampled.length);
-
-        return floatsToBytes(resampled);
-    }
-
-    private float[] bytesToFloats(byte[] pcmBytes) {
-        short[] shortSamples = new short[pcmBytes.length / 2];
-        ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shortSamples);
-
-        float[] floatSamples = new float[shortSamples.length];
-        for(int i = 0; i < shortSamples.length; i++){
-            floatSamples[i] = shortSamples[i] / 32768.0f;
-        }
-        return floatSamples;
-    }
-
-    private byte[] floatsToBytes(float[] floatSamples) {
-        ByteBuffer buffer = ByteBuffer.allocate(floatSamples.length * 2);
-        buffer.order(ByteOrder.LITTLE_ENDIAN);
-        for(float sample : floatSamples){
-            buffer.putShort((short) (sample * 32767.0));
-        }
-        return buffer.array();
-    }
-
-
+    // Ses normalizasyonu
     public byte[] normalizeVolume(byte[] audioData, float targetLevel) {
         if (audioData == null || audioData.length < 2) return audioData;
 
